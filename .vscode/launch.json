@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Launch Gabbro Emulator",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "echo",
+      "args": ["Pebble"],
+      "preLaunchTask": "Run Gabbro Emulator"
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Pebble Build",
+            "type": "shell",
+            "command": "pebble build",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Pebble Clean",
+            "type": "shell",
+            "command": "pebble clean"
+        },
+        {
+            "label": "Run Gabbro Emulator",
+            "type": "shell",
+            "command": "pebble install --emulator gabbro",
+            "dependsOn": "Pebble Build"
+        },
+        {
+            "label": "Run Emery Emulator",
+            "type": "shell",
+            "command": "pebble install --emulator emery",
+            "dependsOn": "Pebble Build"
+        },
+        {
+            "label": "Pebble Logs",
+            "type": "shell",
+            "command": "pebble logs"
+        }
+    ]
+}

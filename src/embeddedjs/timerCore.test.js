@@ -5,7 +5,7 @@ import {
   formatDuration,
   formatTimeOfDay,
   getDayKey
-} from "../src/embeddedjs/timerCore.js";
+} from "./timerCore.js";
 
 describe("Timer Core - Multi-Day & Segment Operations", () => {
   it("computes accurate YYYY-MM-DD day keys", () => {
@@ -28,6 +28,17 @@ describe("Timer Core - Multi-Day & Segment Operations", () => {
     assert.equal(tracker.getDayTotalMs("2026-09-02"), 1800000);
     assert.equal(tracker.getDaySegments("2026-09-01").length, 1);
     assert.equal(tracker.getDaySegments("2026-09-02").length, 1);
+  });
+
+  it("computes elapsed time for an active segment", () => {
+    const tracker = new WorkTracker();
+    const startTime = 1000000;
+
+    assert.equal(tracker.getElapsedCurrentMs(startTime + 5000), 0);
+    tracker.start("Active Task", startTime);
+
+    assert.equal(tracker.getElapsedCurrentMs(startTime + 5000), 5000);
+    assert.equal(tracker.getElapsedCurrentMs(startTime - 1), 0);
   });
 
   it("renames an existing segment without modifying time data", () => {

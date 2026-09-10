@@ -48,6 +48,11 @@ export class WorkTracker {
     return this.currentSegment !== null;
   }
 
+  getElapsedCurrentMs(now = Date.now()) {
+    if (!this.isTiming()) return 0;
+    return Math.max(0, now - this.currentSegment.startTime);
+  }
+
   start(label, startTime = Date.now()) {
     if (this.isTiming()) {
       this.stop(startTime);

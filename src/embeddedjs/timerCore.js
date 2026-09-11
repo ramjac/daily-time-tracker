@@ -1,3 +1,7 @@
+function pad2(n) {
+  return n < 10 ? `0${n}` : `${n}`;
+}
+
 export function getDefaultLabel(date = new Date()) {
   const ms = 1000 * 60 * 5;
   const rounded = new Date(Math.round(date.getTime() / ms) * ms);
@@ -5,8 +9,7 @@ export function getDefaultLabel(date = new Date()) {
   const minutes = rounded.getMinutes();
   const ampm = hours >= 12 ? 'PM' : 'AM';
   hours = hours % 12 || 12;
-  const formattedMinutes = minutes < 10 ? `0${minutes}` : minutes;
-  return `${hours}:${formattedMinutes} ${ampm}`;
+  return `${hours}:${pad2(minutes)} ${ampm}`;
 }
 
 export function formatDuration(totalSeconds) {
@@ -14,9 +17,8 @@ export function formatDuration(totalSeconds) {
   const hrs = Math.floor(s / 3600);
   const mins = Math.floor((s % 3600) / 60);
   const secs = s % 60;
-  const pad = (n) => (n < 10 ? `0${n}` : `${n}`);
-  if (hrs > 0) return `${pad(hrs)}:${pad(mins)}:${pad(secs)}`;
-  return `${pad(mins)}:${pad(secs)}`;
+  if (hrs > 0) return `${pad2(hrs)}:${pad2(mins)}:${pad2(secs)}`;
+  return `${pad2(mins)}:${pad2(secs)}`;
 }
 
 export function formatTimeOfDay(timestamp) {
@@ -25,8 +27,7 @@ export function formatTimeOfDay(timestamp) {
   const mins = d.getMinutes();
   const ampm = hrs >= 12 ? 'PM' : 'AM';
   hrs = hrs % 12 || 12;
-  const pad = (n) => (n < 10 ? `0${n}` : `${n}`);
-  return `${hrs}:${pad(mins)} ${ampm}`;
+  return `${hrs}:${pad2(mins)} ${ampm}`;
 }
 
 export function getDayKey(timestamp) {
@@ -62,7 +63,7 @@ export class WorkTracker {
       : getDefaultLabel(new Date(startTime));
 
     this.currentSegment = {
-      id: `${startTime}-${Math.random().toString(36).substr(2, 5)}`,
+      id: `${startTime}-${Math.floor(Math.random() * 1e6)}`,
       label: resolvedLabel,
       startTime
     };
@@ -98,7 +99,7 @@ export class WorkTracker {
   }
 
   getDaySegments(dayKey) {
-    return this.days[dayKey] ? [...this.days[dayKey]] : [];
+    return this.days[dayKey] || [];
   }
 
   getDayTotalMs(dayKey, now = Date.now()) {
@@ -107,17 +108,6 @@ export class WorkTracker {
       total += Math.max(0, now - this.currentSegment.startTime);
     }
     return total;
-  }
-
-  renameSegment(dayKey, segmentId, newLabel) {
-    const segs = this.days[dayKey];
-    if (!segs) return null;
-    const seg = segs.find((s) => s.id === segmentId);
-    if (!seg) return null;
-    seg.label = newLabel && newLabel.trim().length > 0
-      ? newLabel.trim()
-      : getDefaultLabel(new Date(seg.startTime));
-    return seg;
   }
 
   /**
@@ -151,6 +141,20 @@ export class WorkTracker {
     const minIdx = Math.min(targetIdx, neighborIdx);
     segs.splice(minIdx, 2, merged);
     return merged;
+  }
+
+  /**
+   * Removes a single segment from a day, used by the Segment Actions menu's
+   * long-press-to-delete. Returns true if a segment was found and removed,
+   * false otherwise (unknown dayKey/segmentId).
+   */
+  deleteSegment(dayKey, segmentId) {
+    const segs = this.days[dayKey];
+    if (!segs) return false;
+    const idx = segs.findIndex((s) => s.id === segmentId);
+    if (idx === -1) return false;
+    segs.splice(idx, 1);
+    return true;
   }
 
   serialize() {

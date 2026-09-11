@@ -41,19 +41,6 @@ describe("Timer Core - Multi-Day & Segment Operations", () => {
     assert.equal(tracker.getElapsedCurrentMs(startTime - 1), 0);
   });
 
-  it("renames an existing segment without modifying time data", () => {
-    const tracker = new WorkTracker();
-    const t0 = 1000000;
-    tracker.start("Old Name", t0);
-    const seg = tracker.stop(t0 + 5000);
-    const dayKey = getDayKey(t0);
-
-    const renamed = tracker.renameSegment(dayKey, seg.id, "Client Review");
-    assert.equal(renamed.label, "Client Review");
-    assert.equal(renamed.durationMs, 5000);
-    assert.equal(tracker.getDaySegments(dayKey)[0].label, "Client Review");
-  });
-
   it("merges target segment with the previous segment, retaining previous name", () => {
     const tracker = new WorkTracker();
     const t0 = new Date(2026, 8, 3, 9, 0, 0).getTime();
@@ -117,6 +104,36 @@ describe("Timer Core - Multi-Day & Segment Operations", () => {
     // Merge next when no next exists
     const invalidNext = tracker.mergeAdjacent(dayKey, seg.id, 1);
     assert.equal(invalidNext, null);
+  });
+
+  it("deletes a segment, leaving the rest of the day untouched", () => {
+    const tracker = new WorkTracker();
+    const t0 = new Date(2026, 8, 3, 9, 0, 0).getTime();
+    const dayKey = "2026-09-03";
+
+    tracker.start("Keep Me", t0);
+    const seg1 = tracker.stop(t0 + 10000);
+    tracker.start("Delete Me", t0 + 20000);
+    const seg2 = tracker.stop(t0 + 30000);
+
+    const removed = tracker.deleteSegment(dayKey, seg2.id);
+    assert.equal(removed, true);
+
+    const remaining = tracker.getDaySegments(dayKey);
+    assert.equal(remaining.length, 1);
+    assert.equal(remaining[0].id, seg1.id);
+  });
+
+  it("returns false when deleting an unknown segment or day", () => {
+    const tracker = new WorkTracker();
+    const t0 = new Date(2026, 8, 3, 9, 0, 0).getTime();
+    const dayKey = "2026-09-03";
+
+    tracker.start("Solo Task", t0);
+    tracker.stop(t0 + 10000);
+
+    assert.equal(tracker.deleteSegment(dayKey, "not-a-real-id"), false);
+    assert.equal(tracker.deleteSegment("2099-01-01", "not-a-real-id"), false);
   });
 
   it("keeps a segment that runs past midnight under the day it started, not the day it ended", () => {

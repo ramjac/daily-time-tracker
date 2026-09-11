@@ -34,6 +34,15 @@ let todaySegIdx = 0;
 let pastDaySegIdx = 0;
 let timerInterval = null;
 
+// Which segment the Segment Actions menu is currently acting on - set
+// when entering the menu (Select on a segments view, in the onPush
+// handler below) and read back by draw()/handleSegmentAction().
+// sourceView is whichever of TODAY_SEGMENTS/PAST_DAY_SEGMENTS opened the
+// menu, so Back and post-action returns land on the right view.
+let segActionsSourceView = null;
+let segActionsDayKey = null;
+let segActionsSegmentId = null;
+
 // The button used to launch the app (e.g. SELECT from the launcher) can
 // still be physically held when this script starts running, so the first
 // event we see for it is a "release" with no matching press seen in-app.
@@ -58,11 +67,15 @@ function refreshPastDayKeys() {
 // spacing that follows it (used to pull related lines - like a label and
 // its value - closer together, or push unrelated lines further apart).
 function paintLines(lines, offsetY) {
-  const visible = lines.filter(l => l.text);
-  const totalHeight = visible.reduce((sum, l, i) => {
-    const gap = i < visible.length - 1 ? (visible[i].gap ?? LINE_GAP) : 0;
-    return sum + l.font.height + gap;
-  }, 0);
+  const visible = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].text) visible.push(lines[i]);
+  }
+  let totalHeight = 0;
+  for (let i = 0; i < visible.length; i++) {
+    totalHeight += visible[i].font.height;
+    if (i < visible.length - 1) totalHeight += visible[i].gap ?? LINE_GAP;
+  }
   let y = Math.max(pad, Math.round((render.height - totalHeight) / 2)) + offsetY;
 
   for (const line of visible) {
@@ -84,17 +97,42 @@ function draw(offsetY = 0) {
   let lines;
   if (currentView === "TODAY_SEGMENTS") {
     lines = getTodaySegmentsLines();
-    if (!lines) { switchToToday(); return; }
+    if (!lines) { switchView("TODAY"); return; }
   } else if (currentView === "PAST_DAYS") {
     lines = getPastDayLines();
-    if (!lines) { switchToToday(); return; }
+    if (!lines) { switchView("TODAY"); return; }
   } else if (currentView === "PAST_DAY_SEGMENTS") {
     lines = getPastDaySegmentsLines();
-    if (!lines) { returnToPastDays(); return; }
+    if (!lines) { switchView("PAST_DAYS"); return; }
+  } else if (currentView === "SEGMENT_ACTIONS") {
+    // The menu is only ever entered right after a valid segment is
+    // selected, and is only left via merge/delete/back (which change
+    // currentView immediately) - so the acted-on segment is always
+    // present here; no null-fallback needed (inlined for the same
+    // reason as the Select-handler's Segment Actions entry above).
+    const seg = tracker.getDaySegments(segActionsDayKey).find((s) => s.id === segActionsSegmentId);
+    lines = getSummaryLines("/\\ Merge Up", seg.label, seg.durationMs, "Hold SELECT: Delete", "\\/ Merge Down");
   } else {
     lines = getTodayLines();
   }
   drawLines(lines, offsetY);
+}
+
+// Shared line-builder for the 5-line "summary" layout used by Today,
+// past-day, and Segment Actions views alike: a top nav hint, a small
+// label hugging the big duration, the duration itself, a secondary
+// status line, and a bottom nav hint - each pushed away from the center
+// by NAV_GAP so the central duration keeps its breathing room. Factored
+// out so the three callers don't duplicate this bytecode, which matters
+// under this app's tight 128KB code+heap budget.
+function getSummaryLines(topNav, label, totalMs, status, bottomNav) {
+  return [
+    { text: topNav, font: fontSmall, color: blue, gap: NAV_GAP },
+    { text: label, font: fontSmall, color: gray, gap: 2 },
+    { text: formatDuration(totalMs / 1000), font: fontBig, color: white },
+    { text: status, font: fontSmall, color: orange, gap: NAV_GAP },
+    { text: bottomNav, font: fontSmall, color: gray }
+  ];
 }
 
 function getTodayLines() {
@@ -105,15 +143,7 @@ function getTodayLines() {
   const status = tracker.isTiming()
     ? `${tracker.currentSegment.label} (${formatDuration(tracker.getElapsedCurrentMs() / 1000)})`
     : "SELECT: Start";
-  // Wider gaps push the Up/Down nav hints away from the central timer
-  // pair; a tight gap keeps "Today's total" hugging the big number above it.
-  return [
-    { text: nav, font: fontSmall, color: blue, gap: NAV_GAP },
-    { text: "Today's total", font: fontSmall, color: gray, gap: 2 },
-    { text: formatDuration(totalMs / 1000), font: fontBig, color: white },
-    { text: status, font: fontSmall, color: orange, gap: NAV_GAP },
-    { text: "\\/ History", font: fontSmall, color: gray }
-  ];
+  return getSummaryLines(nav, "Today's total", totalMs, status, "\\/ History");
 }
 
 // Clamps a paging index into [0, len-1], used whenever the underlying
@@ -158,24 +188,15 @@ function getPastDayLines() {
   const segs = tracker.getDaySegments(key);
   const totalMs = tracker.getDayTotalMs(key);
   const topNav = pastDayIdx === 0 ? "/\\ Today" : "/\\ Next";
-  // Mirrors the Today view's layout: a top nav hint, a small label
-  // hugging the big duration, the duration itself, a secondary status
-  // line, and a bottom nav hint - each pushed away from the center by
-  // NAV_GAP so the timer keeps its breathing room.
-  return [
-    { text: topNav, font: fontSmall, color: blue, gap: NAV_GAP },
-    { text: key, font: fontSmall, color: gray, gap: 2 },
-    { text: formatDuration(totalMs / 1000), font: fontBig, color: white },
-    { text: `${segs.length} timespan${segs.length === 1 ? "" : "s"}`, font: fontSmall, color: orange, gap: NAV_GAP },
-    { text: "\\/ Previous", font: fontSmall, color: gray }
-  ];
+  const status = `${segs.length} timespan${segs.length === 1 ? "" : "s"}`;
+  return getSummaryLines(topNav, key, totalMs, status, "\\/ Previous");
 }
 
 // Segments for whichever past day is currently selected in PAST_DAYS
 // (pastDayKeys[pastDayIdx]), unlike getTodaySegmentsLines() which always
 // looks at today's segments. Starts at the first (oldest) segment when
 // entered, the opposite of Today's segments view which starts at the
-// most recent - see switchToPastDaySegments().
+// most recent - see switchView().
 function getPastDaySegmentsLines() {
   const key = pastDayKeys[pastDayIdx];
   if (!key) return null;
@@ -186,54 +207,70 @@ function getPastDaySegmentsLines() {
 }
 
 // Small bounce-back nudge shown when paging past the end of a list (like
-// the system menu's bounce at its first/last row). direction is -1 when
-// the blocked press was Up (nudge content down then spring back) or 1
-// when the blocked press was Down (nudge content up then spring back).
+// the system menu's bounce at its first/last row), and the slide
+// transition shown when moving between the base Today view and the
+// segment-detail/past-days views (Poco is immediate-mode, so both the
+// outgoing and incoming line sets must be painted together each step to
+// appear simultaneously). Both share one timer/step function (mode
+// switches between "bounce" and "slide") so only one compiled function
+// and one timer variable are needed for both animations, instead of two
+// near-identical ones - see the 128KB code+heap budget note above
+// getCurrentLines(). direction is -1 when the blocked press was Up
+// (nudge/slide up) or 1 for Down; for slides, dir = -1 slides the
+// outgoing view up and off the top (incoming enters from the bottom),
+// dir = 1 the reverse.
 const BOUNCE_FRAMES_PX = [10, 6, 3, 0];
 const BOUNCE_FRAME_MS = 45;
-let bounceTimer = null;
-
-function bounceAtEdge(direction) {
-  if (bounceTimer || transitionTimer) return;
-  let i = 0;
-  function step() {
-    if (i >= BOUNCE_FRAMES_PX.length) { bounceTimer = null; return; }
-    draw(direction * BOUNCE_FRAMES_PX[i]);
-    i++;
-    bounceTimer = setTimeout(step, BOUNCE_FRAME_MS);
-  }
-  step();
-}
-
-// Slide transition shown when moving between the base Today view and the
-// segment-detail view, so the direction of the button press (Up = into
-// segments, Down/Back = back out) is echoed by the outgoing view sliding
-// off screen the same way. Paints both the outgoing and incoming line
-// sets into the same frame each step (Poco is immediate-mode, so both
-// must be drawn together to appear simultaneously on screen). dir = -1
-// slides the outgoing view up and off the top (incoming enters from the
-// bottom); dir = 1 slides the outgoing view down and off the bottom
-// (incoming enters from the top).
 const SLIDE_STEPS = [0.18, 0.4, 0.62, 0.82, 1];
 const SLIDE_FRAME_MS = 40;
-let transitionTimer = null;
+let animTimer = null;
+let animMode = null; // "bounce" or "slide"
+let animDir = 0;
+let animStepIdx = 0;
+let slideOldLines = null;
+let slideNewLines = null;
+
+function animStep() {
+  if (animMode === "bounce") {
+    if (animStepIdx >= BOUNCE_FRAMES_PX.length) { animTimer = null; return; }
+    draw(animDir * BOUNCE_FRAMES_PX[animStepIdx]);
+    animStepIdx++;
+    animTimer = setTimeout(animStep, BOUNCE_FRAME_MS);
+    return;
+  }
+  if (animStepIdx >= SLIDE_STEPS.length) {
+    animTimer = null;
+    slideOldLines = null;
+    slideNewLines = null;
+    return;
+  }
+  const t = SLIDE_STEPS[animStepIdx];
+  const oldOffset = animDir * render.height * t;
+  const newOffset = oldOffset - animDir * render.height;
+  render.begin();
+  render.fillRectangle(black, 0, 0, render.width, render.height);
+  paintLines(slideOldLines, oldOffset);
+  paintLines(slideNewLines, newOffset);
+  render.end();
+  animStepIdx++;
+  animTimer = setTimeout(animStep, SLIDE_FRAME_MS);
+}
+
+function bounceAtEdge(direction) {
+  if (animTimer) return;
+  animMode = "bounce";
+  animDir = direction;
+  animStepIdx = 0;
+  animStep();
+}
 
 function runSlideTransition(oldLines, newLines, dir) {
-  let i = 0;
-  function step() {
-    if (i >= SLIDE_STEPS.length) { transitionTimer = null; return; }
-    const t = SLIDE_STEPS[i];
-    const oldOffset = dir * render.height * t;
-    const newOffset = oldOffset - dir * render.height;
-    render.begin();
-    render.fillRectangle(black, 0, 0, render.width, render.height);
-    paintLines(oldLines, oldOffset);
-    paintLines(newLines, newOffset);
-    render.end();
-    i++;
-    transitionTimer = setTimeout(step, SLIDE_FRAME_MS);
-  }
-  step();
+  animMode = "slide";
+  slideOldLines = oldLines;
+  slideNewLines = newLines;
+  animDir = dir;
+  animStepIdx = 0;
+  animStep();
 }
 
 // Returns the line-set for whichever view is currently active - used to
@@ -251,7 +288,7 @@ function getCurrentLines() {
 // setup (if given) runs after currentView is updated but before the
 // incoming frame is captured, so it can set the paging index to start at.
 function slideTransition(newView, setup, dir) {
-  if (bounceTimer || transitionTimer) return;
+  if (animTimer) return;
   const oldLines = getCurrentLines();
   currentView = newView;
   if (setup) setup();
@@ -259,23 +296,36 @@ function slideTransition(newView, setup, dir) {
   runSlideTransition(oldLines, newLines, dir);
 }
 
-function switchToToday() { currentView = "TODAY"; draw(); }
-
-// Enters the segments view for whichever past day is currently selected.
-// No slide transition here (not requested) - just a plain view switch,
-// same as the other purely-internal/no-animation transitions.
-function switchToPastDaySegments() {
-  currentView = "PAST_DAY_SEGMENTS";
-  pastDaySegIdx = 0; // start at the first (oldest) segment, per spec
+function switchView(view, setup) {
+  currentView = view;
+  if (setup) setup();
   draw();
 }
 
-function returnToPastDays() { currentView = "PAST_DAYS"; draw(); }
+// Handles all Segment Actions menu outcomes: merge with the previous (-1)
+// or next (1) neighbor, or delete (0). Merge bounces in place when
+// there's no such neighbor (mirroring the other edge-of-list bounces);
+// otherwise re-points the source view's paging index at the merged
+// segment. Either way, returns to the source view afterward.
+function handleSegmentAction(direction) {
+  if (direction === 0) {
+    tracker.deleteSegment(segActionsDayKey, segActionsSegmentId);
+  } else {
+    const merged = tracker.mergeAdjacent(segActionsDayKey, segActionsSegmentId, direction);
+    if (!merged) { bounceAtEdge(direction); return; }
+    const idx = tracker.getDaySegments(segActionsDayKey).findIndex((s) => s.id === merged.id);
+    if (segActionsSourceView === "TODAY_SEGMENTS") todaySegIdx = idx >= 0 ? idx : 0;
+    else pastDaySegIdx = idx >= 0 ? idx : 0;
+  }
+  save();
+  currentView = segActionsSourceView;
+  draw();
+}
 
 function startTimerTick() {
   if (timerInterval) clearInterval(timerInterval);
   timerInterval = setInterval(() => {
-    if (currentView === "TODAY" && !bounceTimer && !transitionTimer) draw();
+    if (currentView === "TODAY" && !animTimer) draw();
   }, 1000);
 }
 function stopTimerTick() {
@@ -345,7 +395,7 @@ function generateRandomTestPastDay() {
     const durationMs = Math.round(durations[i]);
     const stopTime = startTime + durationMs;
     segments.push({
-      id: `${startTime}-${Math.random().toString(36).substr(2, 5)}`,
+      id: `${startTime}-${Math.floor(Math.random() * 1e6)}`,
       label: getDefaultLabel(new Date(startTime)),
       startTime,
       stopTime,
@@ -361,30 +411,42 @@ function generateRandomTestPastDay() {
 }
 */
 
+// Long-press SELECT while the Segment Actions menu is open deletes the
+// menu's segment. Detected by measuring press duration on release
+// (rather than a separate setTimeout/closure) to keep this cheap under
+// this app's tight 128KB code+heap budget.
+const DELETE_LONG_PRESS_MS = 600;
+let selectPressStartMs = 0;
+
 new Button({
   types: ["select", "up", "down", "back"],
   onPush(down, type) {
     if (down) {
       pressedSinceLaunch[type] = true;
-      // if (type === "select") { // TEST-ONLY: see block above
-      //   selectLongPressFired = false;
-      //   selectLongPressTimer = setTimeout(() => {
-      //     selectLongPressFired = true;
-      //     generateRandomTestPastDay();
-      //   }, SELECT_LONG_PRESS_MS);
-      // }
+      if (type === "select") selectPressStartMs = Date.now();
       return;
     }
-    // if (type === "select" && selectLongPressTimer) { // TEST-ONLY
-    //   clearTimeout(selectLongPressTimer);
-    //   selectLongPressTimer = null;
-    // }
     if (!pressedSinceLaunch[type]) { pressedSinceLaunch[type] = true; return; }
-    if (bounceTimer || transitionTimer) return; // ignore input mid-animation
+    if (animTimer) return; // ignore input mid-animation
     if (type === "select") {
-      // if (selectLongPressFired) { selectLongPressFired = false; return; } // TEST-ONLY
+      if (currentView === "SEGMENT_ACTIONS") {
+        if (Date.now() - selectPressStartMs >= DELETE_LONG_PRESS_MS) handleSegmentAction(0);
+        return;
+      }
       if (currentView === "TODAY") handleStartStopTimer();
-      else if (currentView === "PAST_DAYS") switchToPastDaySegments();
+      else if (currentView === "PAST_DAYS") switchView("PAST_DAY_SEGMENTS", () => { pastDaySegIdx = 0; });
+      else if (currentView === "TODAY_SEGMENTS" || currentView === "PAST_DAY_SEGMENTS") {
+        // Enter the Segment Actions menu for the currently shown segment,
+        // pinning down which day/segment its actions apply to (inlined
+        // here since it has this one call site - see the 128KB budget
+        // note near getCurrentLines()).
+        segActionsSourceView = currentView;
+        const isToday = currentView === "TODAY_SEGMENTS";
+        segActionsDayKey = isToday ? getDayKey(Date.now()) : pastDayKeys[pastDayIdx];
+        segActionsSegmentId = tracker.getDaySegments(segActionsDayKey)[isToday ? todaySegIdx : pastDaySegIdx].id;
+        currentView = "SEGMENT_ACTIONS";
+        draw();
+      }
     } else if (type === "up") {
       if (currentView === "TODAY") {
         const segs = tracker.getDaySegments(getDayKey(Date.now()));
@@ -399,6 +461,8 @@ new Button({
         if (pastDayIdx > 0) { pastDayIdx--; draw(); } else slideTransition("TODAY", null, -1);
       } else if (currentView === "PAST_DAY_SEGMENTS") {
         if (pastDaySegIdx > 0) { pastDaySegIdx--; draw(); } else bounceAtEdge(-1);
+      } else if (currentView === "SEGMENT_ACTIONS") {
+        handleSegmentAction(-1);
       }
     } else if (type === "down") {
       if (currentView === "TODAY") {
@@ -412,11 +476,14 @@ new Button({
       } else if (currentView === "PAST_DAY_SEGMENTS") {
         const segs = tracker.getDaySegments(pastDayKeys[pastDayIdx]);
         if (pastDaySegIdx < segs.length - 1) { pastDaySegIdx++; draw(); } else bounceAtEdge(1);
+      } else if (currentView === "SEGMENT_ACTIONS") {
+        handleSegmentAction(1);
       }
     } else if (type === "back") {
       if (currentView === "TODAY_SEGMENTS") slideTransition("TODAY", null, 1);
       else if (currentView === "PAST_DAYS") slideTransition("TODAY", null, -1);
-      else if (currentView === "PAST_DAY_SEGMENTS") returnToPastDays();
+      else if (currentView === "PAST_DAY_SEGMENTS") switchView("PAST_DAYS");
+      else if (currentView === "SEGMENT_ACTIONS") { currentView = segActionsSourceView; draw(); }
       else watch.exit();
     }
   }

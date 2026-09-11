@@ -93,7 +93,7 @@ function getTodayLines() {
   const todayKey = getDayKey(Date.now());
   const segs = tracker.getDaySegments(todayKey);
   const totalMs = tracker.getDayTotalMs(todayKey);
-  const nav = segs.length > 0 ? `^ ${segs.length} timespans` : "";
+  const nav = segs.length > 0 ? `/\\ ${segs.length} timespans` : "";
   const status = tracker.isTiming()
     ? `${tracker.currentSegment.label} (${formatDuration(tracker.getElapsedCurrentMs() / 1000)})`
     : "SELECT: Start";
@@ -104,7 +104,7 @@ function getTodayLines() {
     { text: "Today's total", font: fontSmall, color: gray, gap: 2 },
     { text: formatDuration(totalMs / 1000), font: fontBig, color: white },
     { text: status, font: fontSmall, color: orange, gap: NAV_GAP },
-    { text: "v History", font: fontSmall, color: gray }
+    { text: "\\/ History", font: fontSmall, color: gray }
   ];
 }
 
@@ -141,7 +141,7 @@ function drawPastDay(offsetY = 0) {
     { text: key, font: fontSmall, color: blue },
     { text: formatDuration(totalMs / 1000), font: fontBig, color: white },
     { text: `${segs.length} segment${segs.length === 1 ? "" : "s"}`, font: fontSmall, color: orange },
-    { text: pastDayIdx === 0 ? "^ Back to Today" : "^ Newer Day", font: fontSmall, color: gray }
+    { text: pastDayIdx === 0 ? "/\\ Back to Today" : "/\\ Newer Day", font: fontSmall, color: gray }
   ], offsetY);
 }
 

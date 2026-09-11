@@ -44,6 +44,41 @@ The normal data flow is: button/dictation input on the watch -> `WorkTracker` st
   full-screen redraws also cost battery and CPU on already-constrained
   hardware.
 
+## Rendering: prefer Poco over Piu
+
+- This app renders with **Poco** (`commodetto/Poco`), procedural/immediate-mode
+  drawing (`render.begin()` -> `fillRectangle`/`drawText` per line ->
+  `render.end()`), not Piu (Moddable's declarative, retained-mode UI framework
+  with `Application`/`Skin`/`Style`/`Text`). This was a deliberate rewrite
+  after Piu's retained-mode overhead caused repeated `Alloy: Fatal Error /
+  memory full` crashes on this hardware's 128KB budget.
+- In practice Poco has also proven **easier to iterate on** than Piu was, not
+  just lighter: each visual/UX change this session (centering text, enlarging
+  fonts, adding a per-segment label line, reworking segment-paging boundaries,
+  a bounce animation at the list edge) was a small, local change to a plain
+  imperative `drawX()` function and its call site — no fighting a
+  style/skin/declarative-tree model to get one-off layout or animation
+  behavior. Default to Poco for new views/screens in this app; only reach for
+  something heavier if a concrete need arises (and re-check the memory budget
+  if so).
+- Common Poco layout pattern used throughout `main.js`: measure text with
+  `render.getTextWidth(text, font)` for horizontal centering; compute a
+  vertical block height by summing each visible (non-empty) line's
+  `font.height` plus a fixed `LINE_GAP` (6px) between lines, then center that
+  block within `render.height` (clamped to a minimum `pad`). Reuse this same
+  centering logic across all screens (`drawToday`, `drawTodaySegments`,
+  `drawPastDay`) rather than hand-tuning per-screen coordinates.
+- Lightweight animation pattern: rather than a continuous animation loop or a
+  duplicate render path, thread an optional numeric `offsetY` parameter
+  through the existing `drawLines()`/`draw()`/screen-specific draw functions
+  (default `0`, so normal redraws are unaffected). Step through a small fixed
+  array of eased pixel offsets (e.g. `[10, 6, 3, 0]`) via `setTimeout` at a
+  fixed interval (e.g. 45ms/frame), calling the existing `draw(offset)` at each
+  step, guarded by a "currently animating" flag/timer handle so overlapping
+  triggers can't stack. This was used for the segment-list edge-bounce and is
+  the template to follow for any future one-shot UI animation (avoids a second
+  render path and avoids an unbounded/forgotten timer).
+
 ## Memory constraints (Alloy/Moddable XS) — read before adding features
 
 Pebble hardware is intentionally minimal (Arm Cortex-M4/M33 class). Alloy apps on
@@ -100,3 +135,24 @@ cause of mysterious crashes.
   wedged emulator.
 - Use `pebble emu-button click <up|down|select|back> --emulator <target>` to
   simulate button presses (not `emu-tap`, which is for accelerometer taps only).
+- `pebble wipe` alone does not reliably clear this app's persisted
+  localStorage in this environment. If stale segments/days appear
+  unexpectedly during testing, check for leftover `qemu-pebble`/`pypkjs`
+  processes (`ps aux | grep -E "qemu-pebble|pypkjs"`), kill them, then run
+  `pebble wipe --everything` and reinstall to get a genuinely clean state.
+
+## Launch-button stale-press handling
+
+- When the app is (re)launched by a physical button press (e.g. Select from
+  the launcher, or reopening right after Back), that button can still be
+  "held" as the script starts; its eventual release then arrives as a normal
+  in-app button event and can be misread as a deliberate press (e.g.
+  incorrectly stopping the active timer).
+- Fix pattern used here: track a per-button `pressedSinceLaunch` boolean map
+  (`select`/`up`/`down`/`back`). On button-down, mark it pressed. On release:
+  if no press was seen yet for that button, discard the event (it's the stale
+  launch release) and arm the button for normal future use; otherwise handle
+  the release normally. Prefer this over a fixed-time guard window (e.g. "ignore
+  all releases for 500ms") — a time-based guard has zero benefit for buttons
+  already up at launch and can still swallow a genuinely fast real press within
+  the window.

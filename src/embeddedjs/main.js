@@ -111,7 +111,7 @@ function draw(offsetY = 0) {
     // present here; no null-fallback needed (inlined for the same
     // reason as the Select-handler's Segment Actions entry above).
     const seg = tracker.getDaySegments(segActionsDayKey).find((s) => s.id === segActionsSegmentId);
-    lines = getSummaryLines("/\\ Merge Up", seg.label, seg.durationMs, "Hold SELECT: Delete", "\\/ Merge Down");
+    lines = getSummaryLines("/ Merge Up \\", seg.label, seg.durationMs, "Hold SELECT: Delete", "\\ Merge Down /");
   } else {
     lines = getTodayLines();
   }
@@ -139,11 +139,11 @@ function getTodayLines() {
   const todayKey = getDayKey(Date.now());
   const segs = tracker.getDaySegments(todayKey);
   const totalMs = tracker.getDayTotalMs(todayKey);
-  const nav = segs.length > 0 ? `/\\ ${segs.length} timespans` : "";
+  const nav = segs.length > 0 ? `/ ${segs.length} timespans \\` : "";
   const status = tracker.isTiming()
     ? `${tracker.currentSegment.label} (${formatDuration(tracker.getElapsedCurrentMs() / 1000)})`
     : "SELECT: Start";
-  return getSummaryLines(nav, "Today's total", totalMs, status, "\\/ History");
+  return getSummaryLines(nav, "Today's total", totalMs, status, "\\ History /");
 }
 
 // Clamps a paging index into [0, len-1], used whenever the underlying
@@ -187,9 +187,9 @@ function getPastDayLines() {
   const key = pastDayKeys[pastDayIdx];
   const segs = tracker.getDaySegments(key);
   const totalMs = tracker.getDayTotalMs(key);
-  const topNav = pastDayIdx === 0 ? "/\\ Today" : "/\\ Next";
+  const topNav = pastDayIdx === 0 ? "/ Today \\" : "/ Next \\";
   const status = `${segs.length} timespan${segs.length === 1 ? "" : "s"}`;
-  return getSummaryLines(topNav, key, totalMs, status, "\\/ Previous");
+  return getSummaryLines(topNav, key, totalMs, status, "\\ Previous /");
 }
 
 // Segments for whichever past day is currently selected in PAST_DAYS

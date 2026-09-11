@@ -160,13 +160,24 @@ function clampIdx(idx, len) {
 // Today's segments and a past day's segments) - factored out so the two
 // callers don't duplicate this bytecode, which matters under this app's
 // tight 128KB code+heap budget.
-function getSegmentDetailLines(segs, idx) {
+// Adds the same wrapped-arrow nav hints used elsewhere in the app: Up
+// always pages to an earlier segment (bouncing at the first one, so the
+// top hint is always "Previous"), while Down normally pages to a later
+// segment ("Next") except at the last segment of Today's segments view,
+// where Down instead exits back to the base Today view - bottomExitLabel
+// (only passed by getTodaySegmentsLines) swaps the bottom hint to match
+// that special case.
+function getSegmentDetailLines(segs, idx, bottomExitLabel) {
   const seg = segs[idx];
+  const atEnd = idx === segs.length - 1;
+  const bottomNav = atEnd && bottomExitLabel ? `\\ ${bottomExitLabel} /` : "\\ Next /";
   return [
+    { text: "/ Previous \\", font: fontSmall, color: blue, gap: NAV_GAP },
     { text: `${idx + 1} of ${segs.length}`, font: fontSmall, color: blue },
     { text: formatDuration(seg.durationMs / 1000), font: fontBig, color: white },
     { text: `Timespan ${idx + 1}`, font: fontSmall, color: white },
-    { text: `${formatTimeOfDay(seg.startTime)} - ${formatTimeOfDay(seg.stopTime)}`, font: fontSmall, color: orange }
+    { text: `${formatTimeOfDay(seg.startTime)} - ${formatTimeOfDay(seg.stopTime)}`, font: fontSmall, color: orange, gap: NAV_GAP },
+    { text: bottomNav, font: fontSmall, color: gray }
   ];
 }
 
@@ -178,7 +189,7 @@ function getTodaySegmentsLines() {
   const segs = tracker.getDaySegments(todayKey);
   if (segs.length === 0) return null;
   todaySegIdx = clampIdx(todaySegIdx, segs.length);
-  return getSegmentDetailLines(segs, todaySegIdx);
+  return getSegmentDetailLines(segs, todaySegIdx, "Today");
 }
 
 // Returns null when there are no past days (caller falls back to the base

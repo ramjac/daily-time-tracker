@@ -158,7 +158,8 @@ function getTodayLines() {
   const status = timing
     ? `SELECT: Stop (${formatDuration(tracker.getElapsedCurrentMs() / 1000)})`
     : "SELECT: Start";
-  return getSummaryLines(nav, label, totalMs, status, "\\ History /");
+  const bottomNav = pastDayKeys.length > 0 ? "\\ History /" : "";
+  return getSummaryLines(nav, label, totalMs, status, bottomNav);
 }
 
 // Clamps a paging index into [0, len-1], used whenever the underlying

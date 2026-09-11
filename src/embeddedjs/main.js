@@ -71,7 +71,7 @@ function drawToday(offsetY = 0) {
   const todayKey = getDayKey(Date.now());
   const segs = tracker.getDaySegments(todayKey);
   const totalMs = tracker.getDayTotalMs(todayKey);
-  const nav = segs.length > 0 ? `^ ${segs.length} segs` : "";
+  const nav = segs.length > 0 ? `^ ${segs.length} timespans` : "";
   const status = tracker.isTiming()
     ? `${tracker.currentSegment.label} (${formatDuration(tracker.getElapsedCurrentMs() / 1000)})`
     : "SELECT: Start";

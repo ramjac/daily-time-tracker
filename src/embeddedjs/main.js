@@ -162,7 +162,7 @@ function bounceAtEdge(direction) {
 // bottom); dir = 1 slides the outgoing view down and off the bottom
 // (incoming enters from the top).
 const SLIDE_STEPS = [0.18, 0.4, 0.62, 0.82, 1];
-const SLIDE_FRAME_MS = 30;
+const SLIDE_FRAME_MS = 36;
 let transitionTimer = null;
 
 function runSlideTransition(oldLines, newLines, dir) {

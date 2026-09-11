@@ -118,6 +118,13 @@ function draw(offsetY = 0) {
     const mergeDown = segIdx < daySegs.length - 1 ? "\\ Merge Down /" : "";
     const status = "SELECT: Delete, Hold: Label";
     lines = getSummaryLines(mergeUp, seg.label, seg.durationMs, status, mergeDown);
+  } else if (currentView === "SEGMENT_DELETE_CONFIRM") {
+    // Same not-null-checked reasoning as the SEGMENT_ACTIONS branch above -
+    // this view is only reached right after a valid segment is selected
+    // there, and only left via confirm/cancel (which change currentView
+    // immediately).
+    const seg = tracker.getDaySegments(segActionsDayKey).find((s) => s.id === segActionsSegmentId);
+    lines = getSummaryLines("", seg.label, seg.durationMs, "SELECT: Confirm Delete", "BACK: Cancel");
   } else {
     lines = getTodayLines();
   }
@@ -509,7 +516,11 @@ new Button({
     if (type === "select") {
       if (currentView === "SEGMENT_ACTIONS") {
         if (Date.now() - selectPressStartMs >= LONG_PRESS_MS) startSegmentLabelDictation();
-        else handleSegmentAction(0);
+        else switchView("SEGMENT_DELETE_CONFIRM");
+        return;
+      }
+      if (currentView === "SEGMENT_DELETE_CONFIRM") {
+        handleSegmentAction(0);
         return;
       }
       if (currentView === "TODAY") {
@@ -568,6 +579,7 @@ new Button({
       else if (currentView === "PAST_DAYS") slideTransition("TODAY", null, -1);
       else if (currentView === "PAST_DAY_SEGMENTS") switchView("PAST_DAYS");
       else if (currentView === "SEGMENT_ACTIONS") { currentView = segActionsSourceView; draw(); }
+      else if (currentView === "SEGMENT_DELETE_CONFIRM") { currentView = "SEGMENT_ACTIONS"; draw(); }
       else watch.exit();
     }
   }

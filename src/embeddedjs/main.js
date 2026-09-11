@@ -112,7 +112,12 @@ function drawPastDay() {
 }
 
 function switchToToday() { currentView = "TODAY"; draw(); }
-function switchToTodaySegments() { currentView = "TODAY_SEGMENTS"; todaySegIdx = 0; draw(); }
+function switchToTodaySegments() {
+  currentView = "TODAY_SEGMENTS";
+  const segs = tracker.getDaySegments(getDayKey(Date.now()));
+  todaySegIdx = segs.length - 1; // start at the most recent segment
+  draw();
+}
 function switchToPastDays() { currentView = "PAST_DAYS"; pastDayIdx = 0; draw(); }
 
 function startTimerTick() {
@@ -159,7 +164,7 @@ new Button({
         if (pastDayKeys.length > 0) switchToPastDays();
       } else if (currentView === "TODAY_SEGMENTS") {
         const segs = tracker.getDaySegments(getDayKey(Date.now()));
-        if (todaySegIdx < segs.length - 1) { todaySegIdx++; draw(); }
+        if (todaySegIdx < segs.length - 1) { todaySegIdx++; draw(); } else switchToToday();
       } else if (currentView === "PAST_DAYS") {
         if (pastDayIdx < pastDayKeys.length - 1) { pastDayIdx++; draw(); }
       }

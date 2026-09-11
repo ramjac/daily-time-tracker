@@ -19,7 +19,11 @@
       "watchface": false
     },
     "messageKeys": [
-      "dummy"
+      "action",
+      "id",
+      "label",
+      "startTime",
+      "durationMs"
     ],
     "resources": {
       "media": []

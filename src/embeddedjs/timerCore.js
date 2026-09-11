@@ -91,9 +91,10 @@ export class WorkTracker {
 
   getSortedDayKeys() {
     const today = getDayKey(Date.now());
-    const keys = new Set(Object.keys(this.days));
-    keys.add(today);
-    return Array.from(keys).sort(); // Chronological: earliest to latest
+    const keys = Object.keys(this.days);
+    if (!keys.includes(today)) keys.push(today);
+    keys.sort(); // Chronological: earliest to latest
+    return keys;
   }
 
   getDaySegments(dayKey) {

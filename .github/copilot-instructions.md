@@ -33,3 +33,70 @@ The normal data flow is: button/dictation input on the watch -> `WorkTracker` st
 - The UI uses the four hardware button names (`up`, `down`, `select`, `back`) and explicit view state values (`TODAY`, `TODAY_SEGMENTS`, `PAST_DAYS`, `SEGMENT_ACTIONS`) for navigation.
 - When changing time behavior, account for local date boundaries and clock/timestamp deltas; do not introduce a continuously incremented elapsed-time accumulator.
 - The generated `build/` directory is ignored and should not be edited or used as the source of truth.
+
+## Display constraints
+
+- The watch display is a 64-color e-ink (Sharp memory-LCD style) panel, not a
+  backlit LCD/OLED — expect limited color fidelity and no true blacks/deep
+  contrast beyond what the 64-color palette provides.
+- The screen refreshes at roughly 30 frames per second at most. Don't design
+  animations or update loops assuming faster/smoother redraws than that; rapid
+  full-screen redraws also cost battery and CPU on already-constrained
+  hardware.
+
+## Memory constraints (Alloy/Moddable XS) — read before adding features
+
+Pebble hardware is intentionally minimal (Arm Cortex-M4/M33 class). Alloy apps on
+emery/gabbro share a **hard 128KB limit for code + heap combined**. This app runs
+close to that ceiling, so memory pressure — not logic bugs — is the most likely
+cause of mysterious crashes.
+
+- **Symptom of running out of memory**: the app dies with an Alloy fatal error like
+  `fxAbort memory full` / `Chunk allocation: failed for N bytes`, often with no
+  useful stack trace, and sometimes only on the *first* invocation of a code path
+  (button press, dictation, etc.) rather than at startup. Small allocations (as
+  low as ~12 bytes) can fail even though earlier, larger allocations succeeded —
+  the failure size does not indicate the size of the offending object.
+- **First-call cost is real**: XS lazily compiles/materializes functions and
+  closures on first use. A function that looks cheap can cause a chunk-allocation
+  failure the first time it's called, purely from bytecode instantiation/closure
+  setup, even when an inlined equivalent of the same logic does not fail. Don't
+  assume a crash on first button press means the triggering code itself is
+  memory-heavy — it may just be "first execution of anything on this path."
+- **Don't build/prime views or code paths that aren't visible yet** unless the
+  Alloy/Pebble skill documentation calls for it as a pattern. Eagerly
+  constructing offscreen screens, warm-up calls, or speculative caches burns
+  scarce heap for no visible benefit and was a direct contributor to the OOM
+  crashes investigated in this app. Prefer building UI/state lazily, only when a
+  view actually becomes visible.
+- **Avoid `Set`, `Array.from`, and other higher-level collection/iterator
+  helpers** in hot/startup paths on constrained builds; prefer plain
+  `Object.keys()` + manual loops/`push()`. This was a concrete fix in
+  `timerCore.js`'s `getSortedDayKeys()`.
+- **Bisect memory crashes by removing code, not by reasoning about it.** When a
+  path OOMs, comment out/remove suspected calls one at a time (e.g. `save()`,
+  `tracker.start()`, `getDefaultLabel()`, `render*`) and rebuild/reinstall to see
+  which removal makes the crash disappear, then reintroduce pieces individually.
+  The `Heap Usage` line in Pebble logs is not reliable for precise sizing — use
+  presence/absence of the crash itself as the signal.
+- **Start simple and add incrementally.** When a feature or screen isn't
+  strictly required yet, prefer the simpler implementation now and revisit
+  richer behavior later once the app is confirmed stable within the 128KB
+  budget, rather than building out full functionality up front.
+
+### Debugging workflow that avoids wasted cycles
+
+- Do a `pebble clean` before rebuilding when a build/install is behaving oddly
+  (stale build artifacts have caused confusing false crashes/successes in this
+  app before).
+- Start log capture with `pebble logs` **before** `pebble install`, per the
+  Pebble skill guidance, so startup-time crashes aren't missed.
+- Kill any leaked `pebble logs` background processes before retrying an
+  install — a leaked log process can make subsequent installs fail or hang for
+  reasons unrelated to the app code itself.
+- If the emulator gets into a bad state (installs failing unexpectedly, stale
+  app on screen, timeouts), use `pebble kill && pebble wipe` to fully reset
+  emulator state before reinstalling, rather than continuing to debug against a
+  wedged emulator.
+- Use `pebble emu-button click <up|down|select|back> --emulator <target>` to
+  simulate button presses (not `emu-tap`, which is for accelerometer taps only).

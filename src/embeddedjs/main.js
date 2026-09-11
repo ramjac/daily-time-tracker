@@ -110,8 +110,12 @@ function draw(offsetY = 0) {
     // currentView immediately) - so the acted-on segment is always
     // present here; no null-fallback needed (inlined for the same
     // reason as the Select-handler's Segment Actions entry above).
-    const seg = tracker.getDaySegments(segActionsDayKey).find((s) => s.id === segActionsSegmentId);
-    lines = getSummaryLines("/ Merge Up \\", seg.label, seg.durationMs, "Hold SELECT: Delete", "\\ Merge Down /");
+    const daySegs = tracker.getDaySegments(segActionsDayKey);
+    const segIdx = daySegs.findIndex((s) => s.id === segActionsSegmentId);
+    const seg = daySegs[segIdx];
+    const mergeUp = segIdx > 0 ? "/ Merge Up \\" : "";
+    const mergeDown = segIdx < daySegs.length - 1 ? "\\ Merge Down /" : "";
+    lines = getSummaryLines(mergeUp, seg.label, seg.durationMs, "Hold SELECT: Delete", mergeDown);
   } else {
     lines = getTodayLines();
   }

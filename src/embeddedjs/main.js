@@ -44,20 +44,28 @@ function refreshPastDayKeys() {
   pastDayKeys = tracker.getSortedDayKeys().filter(k => k !== todayKey).reverse();
 }
 
-function drawLines(lines, offsetY = 0) {
+// Draws one set of centered lines at a vertical pixel offset. Does not
+// begin/end/clear the frame - callers that need to draw a single view do
+// that themselves (drawLines below); the slide transition paints two line
+// sets (outgoing + incoming view) into the same frame.
+function paintLines(lines, offsetY) {
   const visible = lines.filter(l => l.text);
   const totalHeight = visible.reduce((sum, l) => sum + l.font.height, 0)
     + LINE_GAP * Math.max(0, visible.length - 1);
   let y = Math.max(pad, Math.round((render.height - totalHeight) / 2)) + offsetY;
 
-  render.begin();
-  render.fillRectangle(black, 0, 0, render.width, render.height);
   for (const line of visible) {
     const width = render.getTextWidth(line.text, line.font);
     const x = Math.round((render.width - width) / 2);
     render.drawText(line.text, line.font, line.color, x, y);
     y += line.font.height + LINE_GAP;
   }
+}
+
+function drawLines(lines, offsetY = 0) {
+  render.begin();
+  render.fillRectangle(black, 0, 0, render.width, render.height);
+  paintLines(lines, offsetY);
   render.end();
 }
 
@@ -68,6 +76,10 @@ function draw(offsetY = 0) {
 }
 
 function drawToday(offsetY = 0) {
+  drawLines(getTodayLines(), offsetY);
+}
+
+function getTodayLines() {
   const todayKey = getDayKey(Date.now());
   const segs = tracker.getDaySegments(todayKey);
   const totalMs = tracker.getDayTotalMs(todayKey);
@@ -75,27 +87,36 @@ function drawToday(offsetY = 0) {
   const status = tracker.isTiming()
     ? `${tracker.currentSegment.label} (${formatDuration(tracker.getElapsedCurrentMs() / 1000)})`
     : "SELECT: Start";
-  drawLines([
+  return [
     { text: nav, font: fontSmall, color: blue },
     { text: formatDuration(totalMs / 1000), font: fontBig, color: white },
     { text: status, font: fontSmall, color: orange },
     { text: "v History", font: fontSmall, color: gray }
-  ], offsetY);
+  ];
 }
 
 function drawTodaySegments(offsetY = 0) {
+  const lines = getTodaySegmentsLines();
+  if (!lines) { switchToToday(); return; }
+  drawLines(lines, offsetY);
+}
+
+// Returns null when there are no segments today (caller falls back to the
+// base Today view) rather than drawing directly, so this can also be used
+// to build the "incoming" frame for the slide transition.
+function getTodaySegmentsLines() {
   const todayKey = getDayKey(Date.now());
   const segs = tracker.getDaySegments(todayKey);
-  if (segs.length === 0) { switchToToday(); return; }
+  if (segs.length === 0) return null;
   if (todaySegIdx >= segs.length) todaySegIdx = segs.length - 1;
   if (todaySegIdx < 0) todaySegIdx = 0;
   const seg = segs[todaySegIdx];
-  drawLines([
+  return [
     { text: `${todaySegIdx + 1} of ${segs.length}`, font: fontSmall, color: blue },
     { text: formatDuration(seg.durationMs / 1000), font: fontBig, color: white },
     { text: `Timespan ${todaySegIdx + 1}`, font: fontSmall, color: white },
     { text: `${formatTimeOfDay(seg.startTime)} - ${formatTimeOfDay(seg.stopTime)}`, font: fontSmall, color: orange }
-  ], offsetY);
+  ];
 }
 
 function drawPastDay(offsetY = 0) {
@@ -120,7 +141,7 @@ const BOUNCE_FRAME_MS = 45;
 let bounceTimer = null;
 
 function bounceAtEdge(direction) {
-  if (bounceTimer) return;
+  if (bounceTimer || transitionTimer) return;
   let i = 0;
   function step() {
     if (i >= BOUNCE_FRAMES_PX.length) { bounceTimer = null; return; }
@@ -131,18 +152,63 @@ function bounceAtEdge(direction) {
   step();
 }
 
-function switchToToday() { currentView = "TODAY"; draw(); }
-function switchToTodaySegments() {
+// Slide transition shown when moving between the base Today view and the
+// segment-detail view, so the direction of the button press (Up = into
+// segments, Down/Back = back out) is echoed by the outgoing view sliding
+// off screen the same way. Paints both the outgoing and incoming line
+// sets into the same frame each step (Poco is immediate-mode, so both
+// must be drawn together to appear simultaneously on screen). dir = -1
+// slides the outgoing view up and off the top (incoming enters from the
+// bottom); dir = 1 slides the outgoing view down and off the bottom
+// (incoming enters from the top).
+const SLIDE_STEPS = [0.18, 0.4, 0.62, 0.82, 1];
+const SLIDE_FRAME_MS = 30;
+let transitionTimer = null;
+
+function runSlideTransition(oldLines, newLines, dir) {
+  let i = 0;
+  function step() {
+    if (i >= SLIDE_STEPS.length) { transitionTimer = null; return; }
+    const t = SLIDE_STEPS[i];
+    const oldOffset = dir * render.height * t;
+    const newOffset = oldOffset - dir * render.height;
+    render.begin();
+    render.fillRectangle(black, 0, 0, render.width, render.height);
+    paintLines(oldLines, oldOffset);
+    paintLines(newLines, newOffset);
+    render.end();
+    i++;
+    transitionTimer = setTimeout(step, SLIDE_FRAME_MS);
+  }
+  step();
+}
+
+function slideToSegments() {
+  if (bounceTimer || transitionTimer) return;
+  const oldLines = getTodayLines();
   currentView = "TODAY_SEGMENTS";
   const segs = tracker.getDaySegments(getDayKey(Date.now()));
   todaySegIdx = segs.length - 1; // start at the most recent segment
-  draw();
+  const newLines = getTodaySegmentsLines();
+  runSlideTransition(oldLines, newLines, -1);
 }
+
+function slideToToday() {
+  if (bounceTimer || transitionTimer) return;
+  const oldLines = getTodaySegmentsLines();
+  currentView = "TODAY";
+  const newLines = getTodayLines();
+  runSlideTransition(oldLines, newLines, 1);
+}
+
+function switchToToday() { currentView = "TODAY"; draw(); }
 function switchToPastDays() { currentView = "PAST_DAYS"; pastDayIdx = 0; draw(); }
 
 function startTimerTick() {
   if (timerInterval) clearInterval(timerInterval);
-  timerInterval = setInterval(() => { if (currentView === "TODAY") draw(); }, 1000);
+  timerInterval = setInterval(() => {
+    if (currentView === "TODAY" && !bounceTimer && !transitionTimer) draw();
+  }, 1000);
 }
 function stopTimerTick() {
   if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
@@ -167,12 +233,13 @@ new Button({
   onPush(down, type) {
     if (down) { pressedSinceLaunch[type] = true; return; }
     if (!pressedSinceLaunch[type]) { pressedSinceLaunch[type] = true; return; }
+    if (bounceTimer || transitionTimer) return; // ignore input mid-animation
     if (type === "select") {
       if (currentView === "TODAY") handleStartStopTimer();
     } else if (type === "up") {
       if (currentView === "TODAY") {
         const segs = tracker.getDaySegments(getDayKey(Date.now()));
-        if (segs.length > 0) switchToTodaySegments();
+        if (segs.length > 0) slideToSegments();
       } else if (currentView === "TODAY_SEGMENTS") {
         if (todaySegIdx > 0) { todaySegIdx--; draw(); } else bounceAtEdge(-1);
       } else if (currentView === "PAST_DAYS") {
@@ -184,12 +251,13 @@ new Button({
         if (pastDayKeys.length > 0) switchToPastDays();
       } else if (currentView === "TODAY_SEGMENTS") {
         const segs = tracker.getDaySegments(getDayKey(Date.now()));
-        if (todaySegIdx < segs.length - 1) { todaySegIdx++; draw(); } else switchToToday();
+        if (todaySegIdx < segs.length - 1) { todaySegIdx++; draw(); } else slideToToday();
       } else if (currentView === "PAST_DAYS") {
         if (pastDayIdx < pastDayKeys.length - 1) { pastDayIdx++; draw(); }
       }
     } else if (type === "back") {
-      if (currentView === "TODAY_SEGMENTS" || currentView === "PAST_DAYS") switchToToday();
+      if (currentView === "TODAY_SEGMENTS") slideToToday();
+      else if (currentView === "PAST_DAYS") switchToToday();
       else watch.exit();
     }
   }

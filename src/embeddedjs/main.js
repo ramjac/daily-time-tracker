@@ -24,6 +24,15 @@ let pastDayIdx = 0;
 let todaySegIdx = 0;
 let timerInterval = null;
 
+// The button used to launch the app (e.g. SELECT from the launcher) can
+// still be physically held when this script starts running. Its release
+// then arrives here as an ordinary in-app button event, which would
+// otherwise be misread as a deliberate press and immediately toggle the
+// timer off. Ignore button events for a short window after launch so only
+// releases of button presses made after the app is visible are honored.
+const LAUNCH_GUARD_MS = 500;
+const launchTime = Date.now();
+
 function refreshPastDayKeys() {
   const todayKey = getDayKey(Date.now());
   pastDayKeys = tracker.getSortedDayKeys().filter(k => k !== todayKey).reverse();
@@ -120,6 +129,7 @@ new Button({
   types: ["select", "up", "down", "back"],
   onPush(down, type) {
     if (down) return;
+    if (Date.now() - launchTime < LAUNCH_GUARD_MS) return;
     if (type === "select") {
       if (currentView === "TODAY") handleStartStopTimer();
     } else if (type === "up") {

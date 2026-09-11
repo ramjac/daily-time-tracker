@@ -116,9 +116,7 @@ function draw(offsetY = 0) {
     const seg = daySegs[segIdx];
     const mergeUp = segIdx > 0 ? "/ Merge Up \\" : "";
     const mergeDown = segIdx < daySegs.length - 1 ? "\\ Merge Down /" : "";
-    const status = segActionsSourceView === "PAST_DAY_SEGMENTS"
-      ? "SELECT: Label, Hold: Delete"
-      : "Hold SELECT: Delete";
+    const status = "SELECT: Label, Hold: Delete";
     lines = getSummaryLines(mergeUp, seg.label, seg.durationMs, status, mergeDown);
   } else {
     lines = getTodayLines();
@@ -347,8 +345,9 @@ function handleSegmentAction(direction) {
   draw();
 }
 
-// Single reusable Dictation instance for labeling past timespans from the
-// Segment Actions menu (short-press SELECT). The target day/segment is
+// Single reusable Dictation instance for labeling timespans (today's
+// completed segments and past days' segments alike) from the Segment
+// Actions menu (short-press SELECT). The target day/segment is
 // captured into module-level vars right before each start() call (rather
 // than read fresh from segActionsDayKey/segActionsSegmentId when the
 // result arrives, in case those globals moved on in the meantime) - the
@@ -494,7 +493,7 @@ new Button({
     if (type === "select") {
       if (currentView === "SEGMENT_ACTIONS") {
         if (Date.now() - selectPressStartMs >= DELETE_LONG_PRESS_MS) handleSegmentAction(0);
-        else if (segActionsSourceView === "PAST_DAY_SEGMENTS") startSegmentLabelDictation();
+        else startSegmentLabelDictation();
         return;
       }
       if (currentView === "TODAY") handleStartStopTimer();

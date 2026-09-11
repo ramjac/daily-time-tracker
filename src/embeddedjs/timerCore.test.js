@@ -1,4 +1,4 @@
-import { describe, it } from "node:test";
+import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import {
   WorkTracker,
@@ -158,5 +158,65 @@ describe("Timer Core - Multi-Day & Segment Operations", () => {
     assert.equal(seg.durationMs, 2 * 3600000);
     assert.equal(tracker.getDaySegments("2026-09-03").length, 1);
     assert.equal(tracker.getDaySegments("2026-09-04").length, 0);
+  });
+});
+
+describe("Timer Core - Daylight Saving Time transitions", () => {
+  // WorkTracker durations are computed as plain epoch-millisecond
+  // subtraction (stopTime - startTime), which is inherently correct
+  // across a DST jump - the wall clock's local hour/minute display can
+  // skip or repeat an hour, but the underlying instants in time (and
+  // their difference) are unaffected. These tests pin a US Eastern-style
+  // DST calendar (spring-forward: 2:00 AM -> 3:00 AM; fall-back:
+  // 2:00 AM -> 1:00 AM) via TZ so behavior doesn't depend on the host
+  // machine's local timezone/DST rules.
+  let originalTZ;
+
+  before(() => {
+    originalTZ = process.env.TZ;
+    process.env.TZ = "America/New_York";
+  });
+
+  after(() => {
+    if (originalTZ === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTZ;
+  });
+
+  it("reports only 1 real hour elapsed for a timer spanning the spring-forward jump (clocks skip 2 AM -> 3 AM)", () => {
+    const tracker = new WorkTracker();
+    // 2026-03-08 is a US DST "spring forward" date: 1:30 AM -> 3:30 AM
+    // local time is only 1 hour of real elapsed time (2:00-3:00 AM never
+    // happens on the clock).
+    const startTime = new Date(2026, 2, 8, 1, 30, 0).getTime();
+    const stopTime = new Date(2026, 2, 8, 3, 30, 0).getTime();
+
+    tracker.start("Spring Forward Task", startTime);
+    const seg = tracker.stop(stopTime);
+
+    assert.equal(seg.durationMs, 1 * 3600000);
+    assert.equal(tracker.getDayTotalMs(getDayKey(startTime)), 1 * 3600000);
+  });
+
+  it("reports 3 real hours elapsed for a timer spanning the fall-back jump (clocks repeat 1 AM -> 2 AM)", () => {
+    const tracker = new WorkTracker();
+    // 2026-11-01 is a US DST "fall back" date: 12:30 AM -> 2:30 AM local
+    // time is 3 hours of real elapsed time (1:00-2:00 AM happens twice).
+    const startTime = new Date(2026, 10, 1, 0, 30, 0).getTime();
+    const stopTime = new Date(2026, 10, 1, 2, 30, 0).getTime();
+
+    tracker.start("Fall Back Task", startTime);
+    const seg = tracker.stop(stopTime);
+
+    assert.equal(seg.durationMs, 3 * 3600000);
+    assert.equal(tracker.getDayTotalMs(getDayKey(startTime)), 3 * 3600000);
+  });
+
+  it("computes correct elapsed time for a still-running timer mid-way through a spring-forward jump", () => {
+    const tracker = new WorkTracker();
+    const startTime = new Date(2026, 2, 8, 1, 30, 0).getTime();
+    const nowJustAfterJump = new Date(2026, 2, 8, 3, 0, 0).getTime(); // 30 real minutes later
+
+    tracker.start("Active Spring Forward Task", startTime);
+    assert.equal(tracker.getElapsedCurrentMs(nowJustAfterJump), 30 * 60000);
   });
 });

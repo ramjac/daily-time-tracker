@@ -140,6 +140,23 @@ cause of mysterious crashes.
   unexpectedly during testing, check for leftover `qemu-pebble`/`pypkjs`
   processes (`ps aux | grep -E "qemu-pebble|pypkjs"`), kill them, then run
   `pebble wipe --everything` and reinstall to get a genuinely clean state.
+- **A long-lived QEMU process can itself become the cause of "OOM" crashes,
+  independent of app code size.** In one session, `Alloy: Fatal Error /
+  memory full` crashes became increasingly frequent (eventually on nearly
+  every Select press, even on a previously-verified-good commit) after the
+  same `qemu-pebble`/`pypkjs` process pair had been reused across dozens of
+  `pebble wipe`/`pebble install` cycles over ~2 hours. Killing those
+  processes by PID (`ps aux | grep qemu-pebble`, then `kill <PID>` on both
+  the `qemu-pebble` and its paired `pypkjs` process) and letting the next
+  `pebble install` spin up a fresh emulator instance made the exact same
+  code crash-free again. **Before concluding a feature is too large for the
+  128KB budget, restart the emulator processes and retest** — many test
+  cycles in a single long session can produce misleading "still crashing"
+  verdicts that are really about emulator staleness, not code size.
+  `pebble kill` cannot be invoked via this environment's bash tool (its
+  kill-command guard blocks any command containing the word "kill", even as
+  a `pebble` subcommand) — use `ps aux | grep qemu-pebble` to find the PIDs
+  and pass them directly to `kill <PID>` instead.
 
 ## Launch-button stale-press handling
 

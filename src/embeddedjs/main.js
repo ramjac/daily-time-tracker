@@ -241,13 +241,93 @@ function handleStartStopTimer() {
   }
 }
 
+/* TEST-ONLY: long-press SELECT to generate a random past day, used to
+   exercise history paging without manually creating days of segments by
+   hand. Not meant to ship - re-comment this whole block (and the two
+   commented hook lines in the Button handler below) before committing.
+
+const SELECT_LONG_PRESS_MS = 600;
+let selectLongPressTimer = null;
+let selectLongPressFired = false;
+
+function generateRandomTestPastDay() {
+  // Each call goes one day further into the past than the last, tracked
+  // via a small persisted counter (separate from real app state) so
+  // repeated long-presses build up a run of distinct past days.
+  const offsetKey = "test_gen_day_offset_v1";
+  const offset = parseInt(localStorage.getItem(offsetKey) || "0", 10) + 1;
+  localStorage.setItem(offsetKey, String(offset));
+
+  const dayStart = new Date();
+  dayStart.setHours(0, 0, 0, 0);
+  dayStart.setDate(dayStart.getDate() - offset);
+  const dayStartMs = dayStart.getTime();
+  const dayKey = getDayKey(dayStartMs);
+  const DAY_MS = 24 * 3600000;
+  const MIN_SEG_MS = 5 * 60000;
+  const MAX_SEG_MS = 2 * 3600000;
+
+  const segCount = 1 + Math.floor(Math.random() * 5); // 1-5 segments
+  const durations = [];
+  for (let i = 0; i < segCount; i++) {
+    durations.push(MIN_SEG_MS + Math.random() * (MAX_SEG_MS - MIN_SEG_MS));
+  }
+  const totalSegMs = durations.reduce((a, b) => a + b, 0);
+  const remaining = Math.max(0, DAY_MS - totalSegMs);
+
+  // Random gaps in the segCount + 1 slots before/between/after segments,
+  // summing to whatever time is left in the day, so segments land at
+  // random sequential (non-overlapping) times.
+  const gapWeights = [];
+  for (let i = 0; i <= segCount; i++) gapWeights.push(Math.random());
+  const gapWeightSum = gapWeights.reduce((a, b) => a + b, 0);
+  const gaps = gapWeights.map((w) => (w / gapWeightSum) * remaining);
+
+  const segments = [];
+  let cursor = dayStartMs + gaps[0];
+  for (let i = 0; i < segCount; i++) {
+    const startTime = Math.round(cursor);
+    const durationMs = Math.round(durations[i]);
+    const stopTime = startTime + durationMs;
+    segments.push({
+      id: `${startTime}-${Math.random().toString(36).substr(2, 5)}`,
+      label: getDefaultLabel(new Date(startTime)),
+      startTime,
+      stopTime,
+      durationMs
+    });
+    cursor = stopTime + gaps[i + 1];
+  }
+
+  tracker.days[dayKey] = segments;
+  save();
+  refreshPastDayKeys();
+  draw();
+}
+*/
+
 new Button({
   types: ["select", "up", "down", "back"],
   onPush(down, type) {
-    if (down) { pressedSinceLaunch[type] = true; return; }
+    if (down) {
+      pressedSinceLaunch[type] = true;
+      // if (type === "select") { // TEST-ONLY: see block above
+      //   selectLongPressFired = false;
+      //   selectLongPressTimer = setTimeout(() => {
+      //     selectLongPressFired = true;
+      //     generateRandomTestPastDay();
+      //   }, SELECT_LONG_PRESS_MS);
+      // }
+      return;
+    }
+    // if (type === "select" && selectLongPressTimer) { // TEST-ONLY
+    //   clearTimeout(selectLongPressTimer);
+    //   selectLongPressTimer = null;
+    // }
     if (!pressedSinceLaunch[type]) { pressedSinceLaunch[type] = true; return; }
     if (bounceTimer || transitionTimer) return; // ignore input mid-animation
     if (type === "select") {
+      // if (selectLongPressFired) { selectLongPressFired = false; return; } // TEST-ONLY
       if (currentView === "TODAY") handleStartStopTimer();
     } else if (type === "up") {
       if (currentView === "TODAY") {

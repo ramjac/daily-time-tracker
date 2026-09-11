@@ -549,7 +549,7 @@ new Button({
           slideTransition("TODAY_SEGMENTS", () => {
             todaySegIdx = tracker.getDaySegments(getDayKey(Date.now())).length - 1;
           }, -1);
-        }
+        } else bounceAtEdge(-1);
       } else if (currentView === "TODAY_SEGMENTS") {
         if (todaySegIdx > 0) { todaySegIdx--; draw(); } else bounceAtEdge(-1);
       } else if (currentView === "PAST_DAYS") {
@@ -563,6 +563,7 @@ new Button({
       if (currentView === "TODAY") {
         refreshPastDayKeys();
         if (pastDayKeys.length > 0) slideTransition("PAST_DAYS", () => { pastDayIdx = 0; }, 1);
+        else bounceAtEdge(1);
       } else if (currentView === "TODAY_SEGMENTS") {
         const segs = tracker.getDaySegments(getDayKey(Date.now()));
         if (todaySegIdx < segs.length - 1) { todaySegIdx++; draw(); } else slideTransition("TODAY", null, 1);

@@ -152,7 +152,7 @@ function getTodayLines() {
   const todayKey = getDayKey(Date.now());
   const segs = tracker.getDaySegments(todayKey);
   const totalMs = tracker.getDayTotalMs(todayKey);
-  const nav = segs.length > 0 ? `/ ${segs.length} timespans \\` : "";
+  const nav = segs.length > 0 ? `/ ${segs.length} timespan${segs.length === 1 ? "" : "s"} \\` : "";
   const timing = tracker.isTiming();
   const label = timing ? tracker.currentSegment.label : "Today's total";
   const status = timing

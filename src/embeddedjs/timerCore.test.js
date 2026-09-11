@@ -136,6 +136,33 @@ describe("Timer Core - Multi-Day & Segment Operations", () => {
     assert.equal(tracker.deleteSegment("2099-01-01", "not-a-real-id"), false);
   });
 
+  it("sets a segment's label via dictation, trimming whitespace", () => {
+    const tracker = new WorkTracker();
+    const t0 = new Date(2026, 8, 3, 9, 0, 0).getTime();
+    const dayKey = "2026-09-03";
+
+    tracker.start("Old Label", t0);
+    const seg = tracker.stop(t0 + 10000);
+
+    const updated = tracker.setSegmentLabel(dayKey, seg.id, "  Grocery Shopping  ");
+    assert.equal(updated, true);
+    assert.equal(tracker.getDaySegments(dayKey)[0].label, "Grocery Shopping");
+  });
+
+  it("leaves a segment's label unchanged on blank dictation text or unknown ids", () => {
+    const tracker = new WorkTracker();
+    const t0 = new Date(2026, 8, 3, 9, 0, 0).getTime();
+    const dayKey = "2026-09-03";
+
+    tracker.start("Old Label", t0);
+    const seg = tracker.stop(t0 + 10000);
+
+    assert.equal(tracker.setSegmentLabel(dayKey, seg.id, "   "), false);
+    assert.equal(tracker.setSegmentLabel(dayKey, "not-a-real-id", "New Label"), false);
+    assert.equal(tracker.setSegmentLabel("2099-01-01", seg.id, "New Label"), false);
+    assert.equal(tracker.getDaySegments(dayKey)[0].label, "Old Label");
+  });
+
   it("keeps a segment that runs past midnight under the day it started, not the day it ended", () => {
     const tracker = new WorkTracker();
     const startTime = new Date(2026, 8, 3, 23, 45, 0).getTime(); // 11:45 PM Sep 3

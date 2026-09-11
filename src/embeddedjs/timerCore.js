@@ -157,6 +157,23 @@ export class WorkTracker {
     return true;
   }
 
+  /**
+   * Sets a segment's label, used by the Segment Actions menu's dictation
+   * feature. Trims and ignores blank text (mirroring start()'s label
+   * handling) so a failed/empty transcription leaves the label unchanged.
+   * Returns true if a segment was found and updated, false otherwise.
+   */
+  setSegmentLabel(dayKey, segmentId, label) {
+    const segs = this.days[dayKey];
+    if (!segs) return false;
+    const trimmed = (label || "").trim();
+    if (!trimmed) return false;
+    const seg = segs.find((s) => s.id === segmentId);
+    if (!seg) return false;
+    seg.label = trimmed;
+    return true;
+  }
+
   serialize() {
     return JSON.stringify({
       days: this.days,

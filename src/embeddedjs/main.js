@@ -1,5 +1,6 @@
 import Poco from "commodetto/Poco";
 import Button from "pebble/button";
+import Dictation from "pebble/dictation";
 import { WorkTracker, formatDuration, formatTimeOfDay, getDayKey, getDefaultLabel } from "timerCore";
 
 const STORAGE_KEY = "work_tracker_state_v2";
@@ -115,7 +116,10 @@ function draw(offsetY = 0) {
     const seg = daySegs[segIdx];
     const mergeUp = segIdx > 0 ? "/ Merge Up \\" : "";
     const mergeDown = segIdx < daySegs.length - 1 ? "\\ Merge Down /" : "";
-    lines = getSummaryLines(mergeUp, seg.label, seg.durationMs, "Hold SELECT: Delete", mergeDown);
+    const status = segActionsSourceView === "PAST_DAY_SEGMENTS"
+      ? "SELECT: Label, Hold: Delete"
+      : "Hold SELECT: Delete";
+    lines = getSummaryLines(mergeUp, seg.label, seg.durationMs, status, mergeDown);
   } else {
     lines = getTodayLines();
   }
@@ -343,6 +347,30 @@ function handleSegmentAction(direction) {
   draw();
 }
 
+// Single reusable Dictation instance for labeling past timespans from the
+// Segment Actions menu (short-press SELECT). The target day/segment is
+// captured at start time rather than re-read from segActionsDayKey/
+// segActionsSegmentId when the result arrives, so a label still lands on
+// the right segment even if those globals moved on in the meantime.
+let segmentDictation = null;
+function startSegmentLabelDictation() {
+  const dayKey = segActionsDayKey;
+  const segmentId = segActionsSegmentId;
+  if (!segmentDictation) {
+    segmentDictation = new Dictation({
+      onReadable() {
+        tracker.setSegmentLabel(dayKey, segmentId, this.read());
+        save();
+        draw();
+      },
+      onError() {
+        draw();
+      }
+    });
+  }
+  segmentDictation.start();
+}
+
 function startTimerTick() {
   if (timerInterval) clearInterval(timerInterval);
   timerInterval = setInterval(() => {
@@ -452,6 +480,7 @@ new Button({
     if (type === "select") {
       if (currentView === "SEGMENT_ACTIONS") {
         if (Date.now() - selectPressStartMs >= DELETE_LONG_PRESS_MS) handleSegmentAction(0);
+        else if (segActionsSourceView === "PAST_DAY_SEGMENTS") startSegmentLabelDictation();
         return;
       }
       if (currentView === "TODAY") handleStartStopTimer();

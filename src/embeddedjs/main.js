@@ -423,7 +423,7 @@ function handleStartStopTimer() {
     save();
     draw();
   } else {
-    tracker.start(getDefaultLabel());
+    tracker.start();
     startTimerTick();
     save();
     draw();
@@ -480,7 +480,7 @@ function generateRandomTestPastDay() {
     const stopTime = startTime + durationMs;
     segments.push({
       id: `${startTime}-${Math.floor(Math.random() * 1e6)}`,
-      label: getDefaultLabel(new Date(startTime)),
+      label: getDefaultLabel(i + 1),
       startTime,
       stopTime,
       durationMs

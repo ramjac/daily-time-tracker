@@ -4,7 +4,8 @@ import {
   WorkTracker,
   formatDuration,
   formatTimeOfDay,
-  getDayKey
+  getDayKey,
+  getDefaultLabel
 } from "./timerCore.js";
 
 describe("Timer Core - Multi-Day & Segment Operations", () => {
@@ -39,6 +40,28 @@ describe("Timer Core - Multi-Day & Segment Operations", () => {
 
     assert.equal(tracker.getElapsedCurrentMs(startTime + 5000), 5000);
     assert.equal(tracker.getElapsedCurrentMs(startTime - 1), 0);
+  });
+
+  it("formats the default label as Timespan N for a given index", () => {
+    assert.equal(getDefaultLabel(1), "Timespan 1");
+    assert.equal(getDefaultLabel(3), "Timespan 3");
+  });
+
+  it("assigns sequential Timespan N default labels within a day when no label is given", () => {
+    const tracker = new WorkTracker();
+    const day = new Date(2026, 8, 5, 9, 0, 0).getTime();
+
+    tracker.start(undefined, day);
+    tracker.stop(day + 60000);
+    tracker.start("", day + 120000);
+    tracker.stop(day + 180000);
+    tracker.start(undefined, day + 240000);
+    tracker.stop(day + 300000);
+
+    const segs = tracker.getDaySegments(getDayKey(day));
+    assert.equal(segs[0].label, "Timespan 1");
+    assert.equal(segs[1].label, "Timespan 2");
+    assert.equal(segs[2].label, "Timespan 3");
   });
 
   it("merges target segment with the previous segment, retaining previous name", () => {

@@ -2,14 +2,8 @@ function pad2(n) {
   return n < 10 ? `0${n}` : `${n}`;
 }
 
-export function getDefaultLabel(date = new Date()) {
-  const ms = 1000 * 60 * 5;
-  const rounded = new Date(Math.round(date.getTime() / ms) * ms);
-  let hours = rounded.getHours();
-  const minutes = rounded.getMinutes();
-  const ampm = hours >= 12 ? 'PM' : 'AM';
-  hours = hours % 12 || 12;
-  return `${hours}:${pad2(minutes)} ${ampm}`;
+export function getDefaultLabel(index) {
+  return `Timespan ${index}`;
 }
 
 export function formatDuration(totalSeconds) {
@@ -58,9 +52,11 @@ export class WorkTracker {
     if (this.isTiming()) {
       this.stop(startTime);
     }
+    const dayKey = getDayKey(startTime);
+    const index = this.getDaySegments(dayKey).length + 1;
     const resolvedLabel = (label && label.trim().length > 0)
       ? label.trim()
-      : getDefaultLabel(new Date(startTime));
+      : getDefaultLabel(index);
 
     this.currentSegment = {
       id: `${startTime}-${Math.floor(Math.random() * 1e6)}`,

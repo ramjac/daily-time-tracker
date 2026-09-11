@@ -349,21 +349,35 @@ function handleSegmentAction(direction) {
 
 // Single reusable Dictation instance for labeling past timespans from the
 // Segment Actions menu (short-press SELECT). The target day/segment is
-// captured at start time rather than re-read from segActionsDayKey/
-// segActionsSegmentId when the result arrives, so a label still lands on
-// the right segment even if those globals moved on in the meantime.
+// captured into module-level vars right before each start() call (rather
+// than read fresh from segActionsDayKey/segActionsSegmentId when the
+// result arrives, in case those globals moved on in the meantime) - the
+// Dictation instance itself is a singleton reused across presses, so its
+// callbacks read these vars instead of closing over per-call locals that
+// would go stale after the first use.
 let segmentDictation = null;
+let dictationDayKey = null;
+let dictationSegmentId = null;
 function startSegmentLabelDictation() {
-  const dayKey = segActionsDayKey;
-  const segmentId = segActionsSegmentId;
+  dictationDayKey = segActionsDayKey;
+  dictationSegmentId = segActionsSegmentId;
   if (!segmentDictation) {
     segmentDictation = new Dictation({
+      // The Dictation system UI consumes whatever button press dismisses
+      // it (e.g. confirming the transcription), so control can return to
+      // our button handler mid-press-cycle - the next event we see is a
+      // release with no matching in-app press, exactly like the stale
+      // launch-button release handled by pressedSinceLaunch above. Re-arm
+      // the same guard here so that stale release is discarded instead of
+      // being treated as a fresh short-press that restarts dictation.
       onReadable() {
-        tracker.setSegmentLabel(dayKey, segmentId, this.read());
+        pressedSinceLaunch.select = false;
+        tracker.setSegmentLabel(dictationDayKey, dictationSegmentId, this.read());
         save();
         draw();
       },
       onError() {
+        pressedSinceLaunch.select = false;
         draw();
       }
     });

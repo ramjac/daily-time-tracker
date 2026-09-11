@@ -44,11 +44,11 @@ function refreshPastDayKeys() {
   pastDayKeys = tracker.getSortedDayKeys().filter(k => k !== todayKey).reverse();
 }
 
-function drawLines(lines) {
+function drawLines(lines, offsetY = 0) {
   const visible = lines.filter(l => l.text);
   const totalHeight = visible.reduce((sum, l) => sum + l.font.height, 0)
     + LINE_GAP * Math.max(0, visible.length - 1);
-  let y = Math.max(pad, Math.round((render.height - totalHeight) / 2));
+  let y = Math.max(pad, Math.round((render.height - totalHeight) / 2)) + offsetY;
 
   render.begin();
   render.fillRectangle(black, 0, 0, render.width, render.height);
@@ -61,13 +61,13 @@ function drawLines(lines) {
   render.end();
 }
 
-function draw() {
-  if (currentView === "TODAY_SEGMENTS") return drawTodaySegments();
-  if (currentView === "PAST_DAYS") return drawPastDay();
-  return drawToday();
+function draw(offsetY = 0) {
+  if (currentView === "TODAY_SEGMENTS") return drawTodaySegments(offsetY);
+  if (currentView === "PAST_DAYS") return drawPastDay(offsetY);
+  return drawToday(offsetY);
 }
 
-function drawToday() {
+function drawToday(offsetY = 0) {
   const todayKey = getDayKey(Date.now());
   const segs = tracker.getDaySegments(todayKey);
   const totalMs = tracker.getDayTotalMs(todayKey);
@@ -80,10 +80,10 @@ function drawToday() {
     { text: formatDuration(totalMs / 1000), font: fontBig, color: white },
     { text: status, font: fontSmall, color: orange },
     { text: "v History", font: fontSmall, color: gray }
-  ]);
+  ], offsetY);
 }
 
-function drawTodaySegments() {
+function drawTodaySegments(offsetY = 0) {
   const todayKey = getDayKey(Date.now());
   const segs = tracker.getDaySegments(todayKey);
   if (segs.length === 0) { switchToToday(); return; }
@@ -95,10 +95,10 @@ function drawTodaySegments() {
     { text: formatDuration(seg.durationMs / 1000), font: fontBig, color: white },
     { text: `Timespan ${todaySegIdx + 1}`, font: fontSmall, color: white },
     { text: `${formatTimeOfDay(seg.startTime)} - ${formatTimeOfDay(seg.stopTime)}`, font: fontSmall, color: orange }
-  ]);
+  ], offsetY);
 }
 
-function drawPastDay() {
+function drawPastDay(offsetY = 0) {
   if (pastDayKeys.length === 0) { switchToToday(); return; }
   const key = pastDayKeys[pastDayIdx];
   const segs = tracker.getDaySegments(key);
@@ -108,7 +108,27 @@ function drawPastDay() {
     { text: formatDuration(totalMs / 1000), font: fontBig, color: white },
     { text: `${segs.length} segment${segs.length === 1 ? "" : "s"}`, font: fontSmall, color: orange },
     { text: pastDayIdx === 0 ? "^ Back to Today" : "^ Newer Day", font: fontSmall, color: gray }
-  ]);
+  ], offsetY);
+}
+
+// Small bounce-back nudge shown when paging past the end of a list (like
+// the system menu's bounce at its first/last row). direction is -1 when
+// the blocked press was Up (nudge content down then spring back) or 1
+// when the blocked press was Down (nudge content up then spring back).
+const BOUNCE_FRAMES_PX = [10, 6, 3, 0];
+const BOUNCE_FRAME_MS = 45;
+let bounceTimer = null;
+
+function bounceAtEdge(direction) {
+  if (bounceTimer) return;
+  let i = 0;
+  function step() {
+    if (i >= BOUNCE_FRAMES_PX.length) { bounceTimer = null; return; }
+    draw(direction * BOUNCE_FRAMES_PX[i]);
+    i++;
+    bounceTimer = setTimeout(step, BOUNCE_FRAME_MS);
+  }
+  step();
 }
 
 function switchToToday() { currentView = "TODAY"; draw(); }
@@ -154,7 +174,7 @@ new Button({
         const segs = tracker.getDaySegments(getDayKey(Date.now()));
         if (segs.length > 0) switchToTodaySegments();
       } else if (currentView === "TODAY_SEGMENTS") {
-        if (todaySegIdx > 0) { todaySegIdx--; draw(); }
+        if (todaySegIdx > 0) { todaySegIdx--; draw(); } else bounceAtEdge(-1);
       } else if (currentView === "PAST_DAYS") {
         if (pastDayIdx > 0) { pastDayIdx--; draw(); } else switchToToday();
       }

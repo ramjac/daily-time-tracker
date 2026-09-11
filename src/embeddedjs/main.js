@@ -140,10 +140,12 @@ function getTodayLines() {
   const segs = tracker.getDaySegments(todayKey);
   const totalMs = tracker.getDayTotalMs(todayKey);
   const nav = segs.length > 0 ? `/ ${segs.length} timespans \\` : "";
-  const status = tracker.isTiming()
-    ? `${tracker.currentSegment.label} (${formatDuration(tracker.getElapsedCurrentMs() / 1000)})`
+  const timing = tracker.isTiming();
+  const label = timing ? tracker.currentSegment.label : "Today's total";
+  const status = timing
+    ? `SELECT: Stop (${formatDuration(tracker.getElapsedCurrentMs() / 1000)})`
     : "SELECT: Start";
-  return getSummaryLines(nav, "Today's total", totalMs, status, "\\ History /");
+  return getSummaryLines(nav, label, totalMs, status, "\\ History /");
 }
 
 // Clamps a paging index into [0, len-1], used whenever the underlying

@@ -158,7 +158,10 @@ function getTodayLines() {
   const status = timing
     ? `SELECT: Stop (${formatDuration(tracker.getElapsedCurrentMs() / 1000)})`
     : "SELECT: Start";
-  const bottomNav = pastDayKeys.length > 0 ? "\\ History /" : "";
+  // While timing, surface the long-press-to-label hint in place of the
+  // History nav (which is less useful mid-timer anyway) so it fits
+  // without lengthening the status line beyond the screen width.
+  const bottomNav = timing ? "Hold: Label" : (pastDayKeys.length > 0 ? "\\ History /" : "");
   return getSummaryLines(nav, label, totalMs, status, bottomNav);
 }
 
@@ -503,20 +506,33 @@ function generateRandomTestPastDay() {
 // this app's tight 128KB code+heap budget.
 const LONG_PRESS_MS = 600;
 let selectPressStartMs = 0;
+// Tracks whether we actually saw this press cycle's own "down" event -
+// a release can arrive with no matching in-app down (e.g. the stray
+// release left over from dismissing dictation, or any other dropped/
+// out-of-order button event). Without this guard such a release would
+// measure its duration against a stale selectPressStartMs from a much
+// earlier press (possibly long enough ago to look like a long-press),
+// misfiring dictation on what the user experienced as a quick tap.
+let selectDownSeen = false;
 
 new Button({
   types: ["select", "up", "down", "back"],
   onPush(down, type) {
     if (down) {
       pressedSinceLaunch[type] = true;
-      if (type === "select") selectPressStartMs = Date.now();
+      if (type === "select") {
+        selectPressStartMs = Date.now();
+        selectDownSeen = true;
+      }
       return;
     }
     if (!pressedSinceLaunch[type]) { pressedSinceLaunch[type] = true; return; }
     if (animTimer) return; // ignore input mid-animation
     if (type === "select") {
+      const isLongPress = selectDownSeen && Date.now() - selectPressStartMs >= LONG_PRESS_MS;
+      selectDownSeen = false;
       if (currentView === "SEGMENT_ACTIONS") {
-        if (Date.now() - selectPressStartMs >= LONG_PRESS_MS) startSegmentLabelDictation();
+        if (isLongPress) startSegmentLabelDictation();
         else switchView("SEGMENT_DELETE_CONFIRM");
         return;
       }
@@ -525,7 +541,7 @@ new Button({
         return;
       }
       if (currentView === "TODAY") {
-        if (tracker.isTiming() && Date.now() - selectPressStartMs >= LONG_PRESS_MS) {
+        if (tracker.isTiming() && isLongPress) {
           startCurrentSegmentLabelDictation();
         } else {
           handleStartStopTimer();

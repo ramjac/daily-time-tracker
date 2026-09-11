@@ -118,6 +118,59 @@ cause of mysterious crashes.
   strictly required yet, prefer the simpler implementation now and revisit
   richer behavior later once the app is confirmed stable within the 128KB
   budget, rather than building out full functionality up front.
+- **A recurring `Alloy: Fatal Error / memory full` after repeated start/stop
+  cycles is likely NOT a code-side leak — check the native XS heap sizing
+  first.** PebbleOS's default `moddable_createMachine(NULL)` reserves a large
+  slot heap but a *tiny* chunk heap (observed as low as ~5KB capacity), and
+  chunk memory backs exactly the strings/arrays/objects that persisted
+  segment data needs. This tiny default fills up after only ~10 real
+  start/stop cycles, **even while ~100KB of native RAM sits completely
+  unused** — confirmed via `kModdableCreationFlagLogInstrumentation` showing
+  `App bytes free` pegged constant while `Chunk used` climbed to the ceiling.
+  Don't waste time bisecting per-statement "leaks" (dozens of bytes) as the
+  explanation for exhausting 100+KB; that math doesn't add up, and the real
+  fix is sizing the machine explicitly. See `src/c/mdbl.c`: both branches now
+  call `moddable_createMachine(&cr)` with an explicit
+  `ModdableCreationRecord{ stack=4KB, slot=32KB, chunk=48KB }` instead of
+  `NULL`. Key gotchas if you ever need to retune these numbers:
+  - The three fields (`stack`, `slot`, `chunk`) are **all-or-nothing** — if
+    any one is non-zero, all three must be non-zero, or PebbleOS rejects the
+    record as `"invalid ModdableCreationRecord"`.
+  - Firmware versions before v4.21.0/v4.22.0 have a confirmed regression
+    (coredevices/pebbleos#1592) where custom sizes are silently discarded
+    (shadowed local variable bug) and the machine falls back to a ~512-slot
+    default — sometimes surfacing as a hard native fault (`PC:0`) instead of
+    a graceful error. This repo's SDK (4.33.1) is past the fix.
+  - Total size isn't unlimited even when the fix is in place — there's other
+    fixed overhead (e.g. a ~32KB static/keys reservation) sharing the same
+    budget. A too-large total can still hard-fault at startup. Increase
+    sizes conservatively and re-run a stress test (dozens of rapid
+    start/stop presses) after each change.
+  - `gc()` is NOT exposed as a global function in this Pebble/Alloy XS port —
+    don't rely on manually triggering GC as a workaround.
+- **`kModdableCreationFlagLogInstrumentation`** (set alongside
+  `kModdableCreationFlagDebug` in the debug build of `mdbl.c`) periodically
+  logs real heap metrics (`Chunk used`, `Chunk available`, `Slot used`,
+  `App bytes free`, etc.) to the same log stream `pebble logs` reads. This is
+  the single most useful tool for diagnosing "memory full" crashes — far
+  more reliable than guessing from allocation failure sizes. It requires no
+  Bluetooth connection to work against the QEMU emulator's log stream.
+- **Pebble's persistent key-value storage has its own separate quota**,
+  distinct from the JS heap. Serializing a very large number of segments
+  into one storage key can hit `Error: key-value error (in write)` even when
+  the heap fix above is in place. This was only observed at ~120 segments
+  written in a single rapid-fire stress test (far beyond a realistic day's
+  10-30 segments), so it's not something normal usage should hit, but if
+  very-long-history features are ever added, consider pruning/rotating
+  old data rather than growing one unbounded key.
+- **Reuse a single `Date` instance instead of `new Date(timestamp)` in
+  hot/repeated paths.** `timerCore.js`'s `getDayKey()`/`formatTimeOfDay()` now
+  share one `sharedDate` via a `dateAt(timestamp)` helper (`sharedDate.setTime(...)`)
+  instead of allocating a new `Date` per call. This is a real, measurable
+  improvement (confirmed in isolation: a loop of `new Date(timestamp)` calls
+  exhausts chunk heap; reusing one instance via `.setTime()` doesn't) — keep
+  this pattern for any other per-call `Date` construction added later, even
+  though it's secondary to the XS heap sizing fix above.
 
 ### Debugging workflow that avoids wasted cycles
 

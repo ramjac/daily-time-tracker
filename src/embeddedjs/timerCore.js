@@ -15,8 +15,21 @@ export function formatDuration(totalSeconds) {
   return `${pad2(mins)}:${pad2(secs)}`;
 }
 
+// Reused across every call instead of `new Date(timestamp)` per call: this
+// Moddable XS Pebble port leaks a small chunk allocation on every Date
+// constructor invocation (confirmed by bisection - Date.now() alone does
+// not leak, `new Date(x)` does, and reusing one instance via setTime()
+// does not). getDayKey()/formatTimeOfDay() are called on nearly every
+// draw/timer-tick, so constructing a fresh Date each time reliably
+// exhausts the 128KB heap within a few dozen redraws.
+const sharedDate = new Date();
+function dateAt(timestamp) {
+  sharedDate.setTime(timestamp);
+  return sharedDate;
+}
+
 export function formatTimeOfDay(timestamp) {
-  const d = new Date(timestamp);
+  const d = dateAt(timestamp);
   let hrs = d.getHours();
   const mins = d.getMinutes();
   const ampm = hrs >= 12 ? 'PM' : 'AM';
@@ -25,7 +38,7 @@ export function formatTimeOfDay(timestamp) {
 }
 
 export function getDayKey(timestamp) {
-  const d = new Date(timestamp);
+  const d = dateAt(timestamp);
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');

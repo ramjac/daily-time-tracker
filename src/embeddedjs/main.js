@@ -501,65 +501,75 @@ function generateRandomTestPastDay() {
 
 // Long-press SELECT triggers dictation (Segment Actions menu, or the
 // base Today view while a timer is running); short-press SELECT deletes
-// the menu's segment. Detected by measuring press duration on release
-// (rather than a separate setTimeout/closure) to keep this cheap under
-// this app's tight 128KB code+heap budget.
+// the menu's segment. Classification is delegated to the native "long"
+// click recognizer (see below) rather than measured by comparing
+// Date.now() timestamps taken on our own "raw" down/up events - a wall-
+// clock delta measured entirely in JS is only as accurate as the JS
+// event loop's ability to promptly run both callbacks, and any main-
+// thread stall between the down and up events (e.g. a first-call
+// bytecode-compile stall, or work done by the once-a-second timer tick)
+// inflates the *measured* duration without the physical press actually
+// having been held any longer - this was observed to occasionally
+// misfire dictation on a genuinely quick "stop timer" press on real
+// hardware, even though it reliably measured correctly in the emulator.
+// The native long-click recognizer's threshold is timed by the OS's own
+// click-detection service, so it stays correct regardless of any delay
+// in when JS gets around to running the resulting callback.
 const LONG_PRESS_MS = 600;
-let selectPressStartMs = 0;
-// Tracks whether we actually saw this press cycle's own "down" event -
-// a release can arrive with no matching in-app down (e.g. the stray
-// release left over from dismissing dictation, or any other dropped/
-// out-of-order button event). Without this guard such a release would
-// measure its duration against a stale selectPressStartMs from a much
-// earlier press (possibly long enough ago to look like a long-press),
-// misfiring dictation on what the user experienced as a quick tap.
-let selectDownSeen = false;
+// Set by the "long" recognizer's down (pushed=1) callback once the
+// native long-press threshold fires while SELECT is still held; read by
+// the "raw" recognizer's up (pushed=0) callback to skip re-triggering
+// the short-press action for the same physical release.
+let selectLongPressHandled = false;
+
+// Dispatches SELECT's short-press action for the current view (mirrors
+// the long-press dispatch below). Called from the "raw" up event, unless
+// a long-press for this same physical hold was already handled.
+function handleSelectShortPress() {
+  if (currentView === "SEGMENT_ACTIONS") {
+    switchView("SEGMENT_DELETE_CONFIRM");
+  } else if (currentView === "SEGMENT_DELETE_CONFIRM") {
+    handleSegmentAction(0);
+  } else if (currentView === "TODAY") {
+    handleStartStopTimer();
+  } else if (currentView === "PAST_DAYS") {
+    switchView("PAST_DAY_SEGMENTS", () => { pastDaySegIdx = 0; });
+  } else if (currentView === "TODAY_SEGMENTS" || currentView === "PAST_DAY_SEGMENTS") {
+    // Enter the Segment Actions menu for the currently shown segment,
+    // pinning down which day/segment its actions apply to (inlined
+    // here since it has this one call site - see the 128KB budget
+    // note near getCurrentLines()).
+    segActionsSourceView = currentView;
+    const isToday = currentView === "TODAY_SEGMENTS";
+    segActionsDayKey = isToday ? getDayKey(Date.now()) : pastDayKeys[pastDayIdx];
+    segActionsSegmentId = tracker.getDaySegments(segActionsDayKey)[isToday ? todaySegIdx : pastDaySegIdx].id;
+    currentView = "SEGMENT_ACTIONS";
+    draw();
+  }
+}
+
+// Dispatches SELECT's long-press action for the current view. Called
+// the moment the native long recognizer fires (while still held),
+// rather than waiting for release, so dictation starts as promptly as
+// the old duration-based check did.
+function handleSelectLongPress() {
+  if (currentView === "SEGMENT_ACTIONS") {
+    startSegmentLabelDictation();
+  } else if (currentView === "TODAY" && tracker.isTiming()) {
+    startCurrentSegmentLabelDictation();
+  }
+}
 
 new Button({
-  types: ["select", "up", "down", "back"],
+  types: ["up", "down", "back"],
   onPush(down, type) {
     if (down) {
       pressedSinceLaunch[type] = true;
-      if (type === "select") {
-        selectPressStartMs = Date.now();
-        selectDownSeen = true;
-      }
       return;
     }
     if (!pressedSinceLaunch[type]) { pressedSinceLaunch[type] = true; return; }
     if (animTimer) return; // ignore input mid-animation
-    if (type === "select") {
-      const isLongPress = selectDownSeen && Date.now() - selectPressStartMs >= LONG_PRESS_MS;
-      selectDownSeen = false;
-      if (currentView === "SEGMENT_ACTIONS") {
-        if (isLongPress) startSegmentLabelDictation();
-        else switchView("SEGMENT_DELETE_CONFIRM");
-        return;
-      }
-      if (currentView === "SEGMENT_DELETE_CONFIRM") {
-        handleSegmentAction(0);
-        return;
-      }
-      if (currentView === "TODAY") {
-        if (tracker.isTiming() && isLongPress) {
-          startCurrentSegmentLabelDictation();
-        } else {
-          handleStartStopTimer();
-        }
-      } else if (currentView === "PAST_DAYS") switchView("PAST_DAY_SEGMENTS", () => { pastDaySegIdx = 0; });
-      else if (currentView === "TODAY_SEGMENTS" || currentView === "PAST_DAY_SEGMENTS") {
-        // Enter the Segment Actions menu for the currently shown segment,
-        // pinning down which day/segment its actions apply to (inlined
-        // here since it has this one call site - see the 128KB budget
-        // note near getCurrentLines()).
-        segActionsSourceView = currentView;
-        const isToday = currentView === "TODAY_SEGMENTS";
-        segActionsDayKey = isToday ? getDayKey(Date.now()) : pastDayKeys[pastDayIdx];
-        segActionsSegmentId = tracker.getDaySegments(segActionsDayKey)[isToday ? todaySegIdx : pastDaySegIdx].id;
-        currentView = "SEGMENT_ACTIONS";
-        draw();
-      }
-    } else if (type === "up") {
+    if (type === "up") {
       if (currentView === "TODAY") {
         const segs = tracker.getDaySegments(getDayKey(Date.now()));
         if (segs.length > 0) {
@@ -600,6 +610,46 @@ new Button({
       else if (currentView === "SEGMENT_DELETE_CONFIRM") { currentView = "SEGMENT_ACTIONS"; draw(); }
       else watch.exit();
     }
+  }
+});
+
+// SELECT gets its own Button instance combining two recognizers on the
+// same physical button: "raw" (immediate down/up, used for the
+// stale-launch-press guard and to dispatch the short-press action on
+// release) and "long" (the OS click-detection service's own natively-
+// timed long-press recognizer, used to dispatch the long-press/dictation
+// action). See the comment above LONG_PRESS_MS for why long-press
+// classification is delegated to "long" instead of measured by hand.
+new Button({
+  type: "select",
+  raw: true,
+  long: { delay: LONG_PRESS_MS },
+  onPush(down, type, recognizer) {
+    if (recognizer === "long") {
+      if (down) {
+        // Native threshold reached while still held - guard against a
+        // stale hold left over from app launch, same as the raw path.
+        if (!pressedSinceLaunch.select) return;
+        if (animTimer) return;
+        selectLongPressHandled = true;
+        handleSelectLongPress();
+      }
+      // The corresponding long-release (down === 0) needs no handling -
+      // the action already ran on the down side above, and the raw up
+      // event for this same physical release (below) checks
+      // selectLongPressHandled to avoid double-firing a short press.
+      return;
+    }
+    // recognizer === "raw"
+    if (down) {
+      pressedSinceLaunch.select = true;
+      selectLongPressHandled = false;
+      return;
+    }
+    if (!pressedSinceLaunch.select) { pressedSinceLaunch.select = true; return; }
+    if (selectLongPressHandled) { selectLongPressHandled = false; return; }
+    if (animTimer) return; // ignore input mid-animation
+    handleSelectShortPress();
   }
 });
 

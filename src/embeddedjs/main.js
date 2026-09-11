@@ -165,18 +165,21 @@ function clampIdx(idx, len) {
 // callers don't duplicate this bytecode, which matters under this app's
 // tight 128KB code+heap budget.
 // Adds the same wrapped-arrow nav hints used elsewhere in the app: Up
-// always pages to an earlier segment (bouncing at the first one, so the
-// top hint is always "Previous"), while Down normally pages to a later
-// segment ("Next") except at the last segment of Today's segments view,
-// where Down instead exits back to the base Today view - bottomExitLabel
-// (only passed by getTodaySegmentsLines) swaps the bottom hint to match
-// that special case.
+// pages to an earlier segment ("Previous", hidden at the first segment
+// since there's nothing earlier - Up just bounces there), while Down
+// normally pages to a later segment ("Next", hidden at the last segment
+// unless bottomExitLabel is given) except at the last segment of Today's
+// segments view, where Down instead exits back to the base Today view -
+// bottomExitLabel (only passed by getTodaySegmentsLines) swaps the bottom
+// hint to match that special case.
 function getSegmentDetailLines(segs, idx, bottomExitLabel) {
   const seg = segs[idx];
+  const atStart = idx === 0;
   const atEnd = idx === segs.length - 1;
-  const bottomNav = atEnd && bottomExitLabel ? `\\ ${bottomExitLabel} /` : "\\ Next /";
+  const topNav = atStart ? "" : "/ Previous \\";
+  const bottomNav = atEnd ? (bottomExitLabel ? `\\ ${bottomExitLabel} /` : "") : "\\ Next /";
   return [
-    { text: "/ Previous \\", font: fontSmall, color: blue, gap: NAV_GAP },
+    { text: topNav, font: fontSmall, color: blue, gap: NAV_GAP },
     { text: `${idx + 1} of ${segs.length}`, font: fontSmall, color: blue },
     { text: formatDuration(seg.durationMs / 1000), font: fontBig, color: white },
     { text: `Timespan ${idx + 1}`, font: fontSmall, color: white },
@@ -205,8 +208,9 @@ function getPastDayLines() {
   const segs = tracker.getDaySegments(key);
   const totalMs = tracker.getDayTotalMs(key);
   const topNav = pastDayIdx === 0 ? "/ Today \\" : "/ Next \\";
+  const bottomNav = pastDayIdx === pastDayKeys.length - 1 ? "" : "\\ Previous /";
   const status = `${segs.length} timespan${segs.length === 1 ? "" : "s"}`;
-  return getSummaryLines(topNav, key, totalMs, status, "\\ Previous /");
+  return getSummaryLines(topNav, key, totalMs, status, bottomNav);
 }
 
 // Segments for whichever past day is currently selected in PAST_DAYS

@@ -184,7 +184,7 @@ function getSegmentDetailLines(segs, idx, bottomExitLabel) {
     { text: topNav, font: fontSmall, color: blue, gap: NAV_GAP },
     { text: `${idx + 1} of ${segs.length}`, font: fontSmall, color: blue },
     { text: formatDuration(seg.durationMs / 1000), font: fontBig, color: white },
-    { text: `Timespan ${idx + 1}`, font: fontSmall, color: white },
+    { text: seg.label, font: fontSmall, color: white },
     { text: `${formatTimeOfDay(seg.startTime)} - ${formatTimeOfDay(seg.stopTime)}`, font: fontSmall, color: orange, gap: NAV_GAP },
     { text: bottomNav, font: fontSmall, color: gray }
   ];

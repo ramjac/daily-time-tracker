@@ -158,6 +158,40 @@ cause of mysterious crashes.
   a `pebble` subcommand) — use `ps aux | grep qemu-pebble` to find the PIDs
   and pass them directly to `kill <PID>` instead.
 
+### Testing dictation with `pebble transcribe`
+
+- `pebble transcribe --emulator emery "some text"` (or `--qemu <host> "text"`)
+  simulates a completed voice transcription being delivered to a running
+  `Dictation` session. Start the app's dictation flow first (trigger it via
+  the in-app button press), *then* run `pebble transcribe` against the same
+  running emulator — it delivers into whatever dictation session is currently
+  open, it does not start one itself.
+- **The command can appear to hang or time out from the CLI's perspective
+  while still succeeding on the watch.** Don't trust a bare exit code/timeout
+  as pass/fail — take a screenshot instead. A successful call transitions the
+  watch from the "Listening" mic icon to a confirmation screen showing the
+  transcribed text with a checkmark.
+- **The confirmation screen requires an explicit Select press to accept** —
+  it does not auto-dismiss after a delay. `pebble emu-button click select
+  --emulator emery` confirms it, at which point control returns to the app
+  (and its `onReadable` callback fires).
+- **A `TypeError: VoiceService.send_stop_audio() takes 1 positional argument
+  but 2 were given` exception may appear in the `pebble transcribe` process's
+  own output/logs.** This is a bug in the `pebble-tool`/`libpebble2` CLI
+  plumbing, not the app — it did not prevent the transcription from reaching
+  the watch or the label from applying correctly in testing. Don't treat this
+  specific exception as a sign the app-side dictation code is broken; verify
+  with a screenshot/log check of the watch state instead.
+- **Avoid stacking button presses while unsure of dictation state.** Because
+  the confirmation screen needs a Select press but the underlying
+  `Dictation`/`pressedSinceLaunch` guard also treats a stray release as
+  "arm, don't act" (see below), sending several `emu-button click select` in
+  a row without checking a screenshot in between can land on the wrong
+  screen or misfire an unrelated action (e.g. accidentally triggering the
+  Segment Actions long-press-to-delete threshold). Screenshot after every
+  button press when testing this flow, and only send the next press once the
+  current screen is confirmed.
+
 ## Stale-press guard: a general pattern, not just app launch
 
 - When the app is (re)launched by a physical button press (e.g. Select from

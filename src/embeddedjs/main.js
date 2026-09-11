@@ -91,10 +91,10 @@ function drawTodaySegments() {
   if (todaySegIdx < 0) todaySegIdx = 0;
   const seg = segs[todaySegIdx];
   drawLines([
-    { text: `${todaySegIdx + 1} of ${segs.length}: ${seg.label}`, font: fontSmall, color: blue },
+    { text: `${todaySegIdx + 1} of ${segs.length}`, font: fontSmall, color: blue },
     { text: formatDuration(seg.durationMs / 1000), font: fontBig, color: white },
-    { text: `${formatTimeOfDay(seg.startTime)} - ${formatTimeOfDay(seg.stopTime)}`, font: fontSmall, color: orange },
-    { text: "", font: fontSmall, color: gray }
+    { text: `Timespan ${todaySegIdx + 1}`, font: fontSmall, color: white },
+    { text: `${formatTimeOfDay(seg.startTime)} - ${formatTimeOfDay(seg.stopTime)}`, font: fontSmall, color: orange }
   ]);
 }
 

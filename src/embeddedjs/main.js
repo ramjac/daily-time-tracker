@@ -166,7 +166,7 @@ function getPastDayLines() {
     { text: topNav, font: fontSmall, color: blue, gap: NAV_GAP },
     { text: key, font: fontSmall, color: gray, gap: 2 },
     { text: formatDuration(totalMs / 1000), font: fontBig, color: white },
-    { text: `${segs.length} segment${segs.length === 1 ? "" : "s"}`, font: fontSmall, color: orange, gap: NAV_GAP },
+    { text: `${segs.length} timespan${segs.length === 1 ? "" : "s"}`, font: fontSmall, color: orange, gap: NAV_GAP },
     { text: "\\/ Previous", font: fontSmall, color: gray }
   ];
 }

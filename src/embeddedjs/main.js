@@ -8,10 +8,14 @@ function save() { localStorage.setItem(STORAGE_KEY, tracker.serialize()); }
 
 const render = new Poco(screen);
 const pad = screen.round ? 28 : 10;
+const LINE_GAP = 6;
 
 // Fonts & colors are created once and reused across every redraw.
-const fontBig = new render.Font("Gothic-Bold", 28);
-const fontSmall = new render.Font("Gothic-Regular", 14);
+// Bitham-Bold is Pebble's dedicated large-digit display font (valid only
+// at 42pt); Gothic-Bold/Regular at 18pt (up from 14pt) for the smaller
+// status/nav lines - all sizes here are validated system font sizes.
+const fontBig = new render.Font("Bitham-Bold", 42);
+const fontSmall = new render.Font("Gothic-Regular", 18);
 const black = render.makeColor(0, 0, 0);
 const white = render.makeColor(255, 255, 255);
 const gray = render.makeColor(136, 136, 136);
@@ -41,12 +45,18 @@ function refreshPastDayKeys() {
 }
 
 function drawLines(lines) {
+  const visible = lines.filter(l => l.text);
+  const totalHeight = visible.reduce((sum, l) => sum + l.font.height, 0)
+    + LINE_GAP * Math.max(0, visible.length - 1);
+  let y = Math.max(pad, Math.round((render.height - totalHeight) / 2));
+
   render.begin();
   render.fillRectangle(black, 0, 0, render.width, render.height);
-  let y = pad;
-  for (const line of lines) {
-    if (line.text) render.drawText(line.text, line.font, line.color, pad, y);
-    y += line.height;
+  for (const line of visible) {
+    const width = render.getTextWidth(line.text, line.font);
+    const x = Math.round((render.width - width) / 2);
+    render.drawText(line.text, line.font, line.color, x, y);
+    y += line.font.height + LINE_GAP;
   }
   render.end();
 }
@@ -66,10 +76,10 @@ function drawToday() {
     ? `${tracker.currentSegment.label} (${formatDuration(tracker.getElapsedCurrentMs() / 1000)})`
     : "SELECT: Start";
   drawLines([
-    { text: nav, font: fontSmall, color: blue, height: 20 },
-    { text: formatDuration(totalMs / 1000), font: fontBig, color: white, height: 36 },
-    { text: status, font: fontSmall, color: orange, height: 20 },
-    { text: "v History", font: fontSmall, color: gray, height: 20 }
+    { text: nav, font: fontSmall, color: blue },
+    { text: formatDuration(totalMs / 1000), font: fontBig, color: white },
+    { text: status, font: fontSmall, color: orange },
+    { text: "v History", font: fontSmall, color: gray }
   ]);
 }
 
@@ -81,10 +91,10 @@ function drawTodaySegments() {
   if (todaySegIdx < 0) todaySegIdx = 0;
   const seg = segs[todaySegIdx];
   drawLines([
-    { text: `${todaySegIdx + 1} of ${segs.length}: ${seg.label}`, font: fontSmall, color: blue, height: 20 },
-    { text: formatDuration(seg.durationMs / 1000), font: fontBig, color: white, height: 36 },
-    { text: `${formatTimeOfDay(seg.startTime)} - ${formatTimeOfDay(seg.stopTime)}`, font: fontSmall, color: orange, height: 20 },
-    { text: "", font: fontSmall, color: gray, height: 20 }
+    { text: `${todaySegIdx + 1} of ${segs.length}: ${seg.label}`, font: fontSmall, color: blue },
+    { text: formatDuration(seg.durationMs / 1000), font: fontBig, color: white },
+    { text: `${formatTimeOfDay(seg.startTime)} - ${formatTimeOfDay(seg.stopTime)}`, font: fontSmall, color: orange },
+    { text: "", font: fontSmall, color: gray }
   ]);
 }
 
@@ -94,10 +104,10 @@ function drawPastDay() {
   const segs = tracker.getDaySegments(key);
   const totalMs = tracker.getDayTotalMs(key);
   drawLines([
-    { text: key, font: fontSmall, color: blue, height: 20 },
-    { text: formatDuration(totalMs / 1000), font: fontBig, color: white, height: 36 },
-    { text: `${segs.length} segment${segs.length === 1 ? "" : "s"}`, font: fontSmall, color: orange, height: 20 },
-    { text: pastDayIdx === 0 ? "^ Back to Today" : "^ Newer Day", font: fontSmall, color: gray, height: 20 }
+    { text: key, font: fontSmall, color: blue },
+    { text: formatDuration(totalMs / 1000), font: fontBig, color: white },
+    { text: `${segs.length} segment${segs.length === 1 ? "" : "s"}`, font: fontSmall, color: orange },
+    { text: pastDayIdx === 0 ? "^ Back to Today" : "^ Newer Day", font: fontSmall, color: gray }
   ]);
 }
 

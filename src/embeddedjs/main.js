@@ -25,13 +25,15 @@ let todaySegIdx = 0;
 let timerInterval = null;
 
 // The button used to launch the app (e.g. SELECT from the launcher) can
-// still be physically held when this script starts running. Its release
-// then arrives here as an ordinary in-app button event, which would
-// otherwise be misread as a deliberate press and immediately toggle the
-// timer off. Ignore button events for a short window after launch so only
-// releases of button presses made after the app is visible are honored.
-const LAUNCH_GUARD_MS = 500;
-const launchTime = Date.now();
+// still be physically held when this script starts running, so the first
+// event we see for it is a "release" with no matching press seen in-app.
+// Track, per button, whether we've seen a genuine in-app press since
+// launch; a release with no prior press is that stale launch release and
+// is discarded (but arms the button so the next real press/release cycle
+// registers normally). This only delays a button whose release is still
+// pending from launch - a button that's already up when the app opens
+// behaves with zero delay.
+const pressedSinceLaunch = { select: false, up: false, down: false, back: false };
 
 function refreshPastDayKeys() {
   const todayKey = getDayKey(Date.now());
@@ -128,8 +130,8 @@ function handleStartStopTimer() {
 new Button({
   types: ["select", "up", "down", "back"],
   onPush(down, type) {
-    if (down) return;
-    if (Date.now() - launchTime < LAUNCH_GUARD_MS) return;
+    if (down) { pressedSinceLaunch[type] = true; return; }
+    if (!pressedSinceLaunch[type]) { pressedSinceLaunch[type] = true; return; }
     if (type === "select") {
       if (currentView === "TODAY") handleStartStopTimer();
     } else if (type === "up") {

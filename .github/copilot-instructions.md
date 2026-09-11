@@ -155,6 +155,15 @@ cause of mysterious crashes.
   the single most useful tool for diagnosing "memory full" crashes — far
   more reliable than guessing from allocation failure sizes. It requires no
   Bluetooth connection to work against the QEMU emulator's log stream.
+  - **Don't confuse `Total Size` in these logs with source code size.** It's
+    the XS machine's allocated *capacity* (slot+chunk+overhead), not
+    compiled bytecode size — a small ~900-line app can legitimately report a
+    `Total Size` around 100-130KB. If `Total Size - Used` looks like a large
+    apparent headroom but a crash still happens almost immediately, that's
+    the signal to look at the *per-sub-heap* breakdown (`Chunk
+    used`/`available` vs `Slot used`/`available`) rather than the aggregate
+    total — one sub-heap can be nearly full while the aggregate still looks
+    roomy.
 - **Pebble's persistent key-value storage has its own separate quota**,
   distinct from the JS heap. Serializing a very large number of segments
   into one storage key can hit `Error: key-value error (in write)` even when

@@ -9,6 +9,11 @@ function save() { localStorage.setItem(STORAGE_KEY, tracker.serialize()); }
 const render = new Poco(screen);
 const pad = screen.round ? 28 : 10;
 const LINE_GAP = 6;
+// Extra spacing (in addition to LINE_GAP) between the Up/Down nav hints
+// on the base Today view and the central timer content, so the nav text
+// sits further from the middle of the screen and the timer gets breathing
+// room around it.
+const NAV_GAP = LINE_GAP + 14;
 
 // Fonts & colors are created once and reused across every redraw.
 // Bitham-Bold is Pebble's dedicated large-digit display font (valid only
@@ -48,17 +53,22 @@ function refreshPastDayKeys() {
 // begin/end/clear the frame - callers that need to draw a single view do
 // that themselves (drawLines below); the slide transition paints two line
 // sets (outgoing + incoming view) into the same frame.
+// Each line may set an optional `gap` overriding the default LINE_GAP
+// spacing that follows it (used to pull related lines - like a label and
+// its value - closer together, or push unrelated lines further apart).
 function paintLines(lines, offsetY) {
   const visible = lines.filter(l => l.text);
-  const totalHeight = visible.reduce((sum, l) => sum + l.font.height, 0)
-    + LINE_GAP * Math.max(0, visible.length - 1);
+  const totalHeight = visible.reduce((sum, l, i) => {
+    const gap = i < visible.length - 1 ? (visible[i].gap ?? LINE_GAP) : 0;
+    return sum + l.font.height + gap;
+  }, 0);
   let y = Math.max(pad, Math.round((render.height - totalHeight) / 2)) + offsetY;
 
   for (const line of visible) {
     const width = render.getTextWidth(line.text, line.font);
     const x = Math.round((render.width - width) / 2);
     render.drawText(line.text, line.font, line.color, x, y);
-    y += line.font.height + LINE_GAP;
+    y += line.font.height + (line.gap ?? LINE_GAP);
   }
 }
 
@@ -87,10 +97,13 @@ function getTodayLines() {
   const status = tracker.isTiming()
     ? `${tracker.currentSegment.label} (${formatDuration(tracker.getElapsedCurrentMs() / 1000)})`
     : "SELECT: Start";
+  // Wider gaps push the Up/Down nav hints away from the central timer
+  // pair; a tight gap keeps "Today's total" hugging the big number above it.
   return [
-    { text: nav, font: fontSmall, color: blue },
+    { text: nav, font: fontSmall, color: blue, gap: NAV_GAP },
+    { text: "Today's total", font: fontSmall, color: gray, gap: 2 },
     { text: formatDuration(totalMs / 1000), font: fontBig, color: white },
-    { text: status, font: fontSmall, color: orange },
+    { text: status, font: fontSmall, color: orange, gap: NAV_GAP },
     { text: "v History", font: fontSmall, color: gray }
   ];
 }

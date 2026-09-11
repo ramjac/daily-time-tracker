@@ -118,4 +118,45 @@ describe("Timer Core - Multi-Day & Segment Operations", () => {
     const invalidNext = tracker.mergeAdjacent(dayKey, seg.id, 1);
     assert.equal(invalidNext, null);
   });
+
+  it("keeps a segment that runs past midnight under the day it started, not the day it ended", () => {
+    const tracker = new WorkTracker();
+    const startTime = new Date(2026, 8, 3, 23, 45, 0).getTime(); // 11:45 PM Sep 3
+    const stopTime = new Date(2026, 8, 4, 0, 15, 0).getTime();   // 12:15 AM Sep 4
+
+    tracker.start("Late Night Task", startTime);
+    const seg = tracker.stop(stopTime);
+
+    // Full 30-minute duration is preserved, not truncated at midnight.
+    assert.equal(seg.durationMs, 30 * 60000);
+
+    // Segment is filed under the start day...
+    assert.equal(tracker.getDaySegments("2026-09-03").length, 1);
+    assert.equal(tracker.getDaySegments("2026-09-03")[0].id, seg.id);
+    assert.equal(tracker.getDayTotalMs("2026-09-03"), 30 * 60000);
+
+    // ...and does not also appear under (or contribute to) the end day.
+    assert.equal(tracker.getDaySegments("2026-09-04").length, 0);
+    assert.equal(tracker.getDayTotalMs("2026-09-04"), 0);
+  });
+
+  it("attributes a still-running overnight segment's elapsed time to its start day, not the new calendar day", () => {
+    const tracker = new WorkTracker();
+    const startTime = new Date(2026, 8, 3, 23, 0, 0).getTime(); // 11:00 PM Sep 3
+    const nowAfterMidnight = new Date(2026, 8, 4, 1, 0, 0).getTime(); // 1:00 AM Sep 4, still running
+
+    tracker.start("Overnight Task", startTime);
+
+    // While active, elapsed time counts toward the start day's total...
+    assert.equal(tracker.getDayTotalMs("2026-09-03", nowAfterMidnight), 2 * 3600000);
+    // ...and is not double-counted (or counted at all) under the new day
+    // it happens to be "now", since the segment hasn't been attributed
+    // there and won't be once stopped.
+    assert.equal(tracker.getDayTotalMs("2026-09-04", nowAfterMidnight), 0);
+
+    const seg = tracker.stop(nowAfterMidnight);
+    assert.equal(seg.durationMs, 2 * 3600000);
+    assert.equal(tracker.getDaySegments("2026-09-03").length, 1);
+    assert.equal(tracker.getDaySegments("2026-09-04").length, 0);
+  });
 });

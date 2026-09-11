@@ -31,6 +31,7 @@ let currentView = "TODAY";
 let pastDayKeys = [];
 let pastDayIdx = 0;
 let todaySegIdx = 0;
+let pastDaySegIdx = 0;
 let timerInterval = null;
 
 // The button used to launch the app (e.g. SELECT from the launcher) can
@@ -82,6 +83,7 @@ function drawLines(lines, offsetY = 0) {
 function draw(offsetY = 0) {
   if (currentView === "TODAY_SEGMENTS") return drawTodaySegments(offsetY);
   if (currentView === "PAST_DAYS") return drawPastDay(offsetY);
+  if (currentView === "PAST_DAY_SEGMENTS") return drawPastDaySegments(offsetY);
   return drawToday(offsetY);
 }
 
@@ -133,16 +135,58 @@ function getTodaySegmentsLines() {
 }
 
 function drawPastDay(offsetY = 0) {
-  if (pastDayKeys.length === 0) { switchToToday(); return; }
+  const lines = getPastDayLines();
+  if (!lines) { switchToToday(); return; }
+  drawLines(lines, offsetY);
+}
+
+// Returns null when there are no past days (caller falls back to the base
+// Today view), mirroring getTodaySegmentsLines()'s pattern so this can
+// also be reused as the "outgoing"/"incoming" frame for a slide transition.
+function getPastDayLines() {
+  if (pastDayKeys.length === 0) return null;
   const key = pastDayKeys[pastDayIdx];
   const segs = tracker.getDaySegments(key);
   const totalMs = tracker.getDayTotalMs(key);
-  drawLines([
-    { text: key, font: fontSmall, color: blue },
+  const topNav = pastDayIdx === 0 ? "/\\ Today" : "/\\ Next";
+  // Mirrors the Today view's layout: a top nav hint, a small label
+  // hugging the big duration, the duration itself, a secondary status
+  // line, and a bottom nav hint - each pushed away from the center by
+  // NAV_GAP so the timer keeps its breathing room.
+  return [
+    { text: topNav, font: fontSmall, color: blue, gap: NAV_GAP },
+    { text: key, font: fontSmall, color: gray, gap: 2 },
     { text: formatDuration(totalMs / 1000), font: fontBig, color: white },
-    { text: `${segs.length} segment${segs.length === 1 ? "" : "s"}`, font: fontSmall, color: orange },
-    { text: pastDayIdx === 0 ? "/\\ Back to Today" : "/\\ Newer Day", font: fontSmall, color: gray }
-  ], offsetY);
+    { text: `${segs.length} segment${segs.length === 1 ? "" : "s"}`, font: fontSmall, color: orange, gap: NAV_GAP },
+    { text: "\\/ Previous", font: fontSmall, color: gray }
+  ];
+}
+
+function drawPastDaySegments(offsetY = 0) {
+  const lines = getPastDaySegmentsLines();
+  if (!lines) { returnToPastDays(); return; }
+  drawLines(lines, offsetY);
+}
+
+// Segments for whichever past day is currently selected in PAST_DAYS
+// (pastDayKeys[pastDayIdx]), unlike getTodaySegmentsLines() which always
+// looks at today's segments. Starts at the first (oldest) segment when
+// entered, the opposite of Today's segments view which starts at the
+// most recent - see switchToPastDaySegments().
+function getPastDaySegmentsLines() {
+  const key = pastDayKeys[pastDayIdx];
+  if (!key) return null;
+  const segs = tracker.getDaySegments(key);
+  if (segs.length === 0) return null;
+  if (pastDaySegIdx >= segs.length) pastDaySegIdx = segs.length - 1;
+  if (pastDaySegIdx < 0) pastDaySegIdx = 0;
+  const seg = segs[pastDaySegIdx];
+  return [
+    { text: `${pastDaySegIdx + 1} of ${segs.length}`, font: fontSmall, color: blue },
+    { text: formatDuration(seg.durationMs / 1000), font: fontBig, color: white },
+    { text: `Timespan ${pastDaySegIdx + 1}`, font: fontSmall, color: white },
+    { text: `${formatTimeOfDay(seg.startTime)} - ${formatTimeOfDay(seg.stopTime)}`, font: fontSmall, color: orange }
+  ];
 }
 
 // Small bounce-back nudge shown when paging past the end of a list (like
@@ -214,8 +258,40 @@ function slideToToday() {
   runSlideTransition(oldLines, newLines, 1);
 }
 
+// Today <-> Past Days uses the opposite dir convention from Today <->
+// Segments: entering Past Days is triggered by Down (dir 1, matching the
+// "exit downward" dir already used by slideToToday above), so leaving
+// Past Days back to Today (triggered by Up or Back) uses dir -1, matching
+// the "enter via Up" dir used by slideToSegments.
+function slideToPastDays() {
+  if (bounceTimer || transitionTimer) return;
+  const oldLines = getTodayLines();
+  currentView = "PAST_DAYS";
+  pastDayIdx = 0;
+  const newLines = getPastDayLines();
+  runSlideTransition(oldLines, newLines, 1);
+}
+
+function slidePastDaysToToday() {
+  if (bounceTimer || transitionTimer) return;
+  const oldLines = getPastDayLines();
+  currentView = "TODAY";
+  const newLines = getTodayLines();
+  runSlideTransition(oldLines, newLines, -1);
+}
+
 function switchToToday() { currentView = "TODAY"; draw(); }
-function switchToPastDays() { currentView = "PAST_DAYS"; pastDayIdx = 0; draw(); }
+
+// Enters the segments view for whichever past day is currently selected.
+// No slide transition here (not requested) - just a plain view switch,
+// same as the other purely-internal/no-animation transitions.
+function switchToPastDaySegments() {
+  currentView = "PAST_DAY_SEGMENTS";
+  pastDaySegIdx = 0; // start at the first (oldest) segment, per spec
+  draw();
+}
+
+function returnToPastDays() { currentView = "PAST_DAYS"; draw(); }
 
 function startTimerTick() {
   if (timerInterval) clearInterval(timerInterval);
@@ -329,6 +405,7 @@ new Button({
     if (type === "select") {
       // if (selectLongPressFired) { selectLongPressFired = false; return; } // TEST-ONLY
       if (currentView === "TODAY") handleStartStopTimer();
+      else if (currentView === "PAST_DAYS") switchToPastDaySegments();
     } else if (type === "up") {
       if (currentView === "TODAY") {
         const segs = tracker.getDaySegments(getDayKey(Date.now()));
@@ -336,21 +413,27 @@ new Button({
       } else if (currentView === "TODAY_SEGMENTS") {
         if (todaySegIdx > 0) { todaySegIdx--; draw(); } else bounceAtEdge(-1);
       } else if (currentView === "PAST_DAYS") {
-        if (pastDayIdx > 0) { pastDayIdx--; draw(); } else switchToToday();
+        if (pastDayIdx > 0) { pastDayIdx--; draw(); } else slidePastDaysToToday();
+      } else if (currentView === "PAST_DAY_SEGMENTS") {
+        if (pastDaySegIdx > 0) { pastDaySegIdx--; draw(); } else bounceAtEdge(-1);
       }
     } else if (type === "down") {
       if (currentView === "TODAY") {
         refreshPastDayKeys();
-        if (pastDayKeys.length > 0) switchToPastDays();
+        if (pastDayKeys.length > 0) slideToPastDays();
       } else if (currentView === "TODAY_SEGMENTS") {
         const segs = tracker.getDaySegments(getDayKey(Date.now()));
         if (todaySegIdx < segs.length - 1) { todaySegIdx++; draw(); } else slideToToday();
       } else if (currentView === "PAST_DAYS") {
-        if (pastDayIdx < pastDayKeys.length - 1) { pastDayIdx++; draw(); }
+        if (pastDayIdx < pastDayKeys.length - 1) { pastDayIdx++; draw(); } else bounceAtEdge(1);
+      } else if (currentView === "PAST_DAY_SEGMENTS") {
+        const segs = tracker.getDaySegments(pastDayKeys[pastDayIdx]);
+        if (pastDaySegIdx < segs.length - 1) { pastDaySegIdx++; draw(); } else bounceAtEdge(1);
       }
     } else if (type === "back") {
       if (currentView === "TODAY_SEGMENTS") slideToToday();
-      else if (currentView === "PAST_DAYS") switchToToday();
+      else if (currentView === "PAST_DAYS") slidePastDaysToToday();
+      else if (currentView === "PAST_DAY_SEGMENTS") returnToPastDays();
       else watch.exit();
     }
   }

@@ -10,6 +10,10 @@ Pebble Timeline as calendar pins.
 Built with cross-platform support for both rectangular (**Emery** / Pebble
 Time 2) and round (**Gabbro** / Pebble Time Round 2) displays.
 
+| Base menu | Timespan submenu | Days history |
+|---|---|---|
+| ![Base menu](screenshots/base-menu.png) | ![Timespan submenu](screenshots/timespan-submenu.png) | ![Days history](screenshots/history-screen.png) |
+
 ---
 
 ## Building & running

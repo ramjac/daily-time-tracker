@@ -174,6 +174,20 @@ export class WorkTracker {
     return true;
   }
 
+  /**
+   * Sets the in-progress (currently running) segment's label, used by the
+   * base Today view's long-press-SELECT dictation feature. Mirrors
+   * setSegmentLabel()'s trim/blank-ignore handling. Returns true if a
+   * timer was running and got updated, false otherwise (nothing running).
+   */
+  setCurrentSegmentLabel(label) {
+    if (!this.isTiming()) return false;
+    const trimmed = (label || "").trim();
+    if (!trimmed) return false;
+    this.currentSegment.label = trimmed;
+    return true;
+  }
+
   serialize() {
     return JSON.stringify({
       days: this.days,

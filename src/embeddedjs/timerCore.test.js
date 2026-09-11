@@ -163,6 +163,27 @@ describe("Timer Core - Multi-Day & Segment Operations", () => {
     assert.equal(tracker.getDaySegments(dayKey)[0].label, "Old Label");
   });
 
+  it("sets the in-progress segment's label via dictation, trimming whitespace", () => {
+    const tracker = new WorkTracker();
+    const t0 = new Date(2026, 8, 3, 9, 0, 0).getTime();
+
+    tracker.start("Old Label", t0);
+    const updated = tracker.setCurrentSegmentLabel("  Deep Work  ");
+    assert.equal(updated, true);
+    assert.equal(tracker.currentSegment.label, "Deep Work");
+  });
+
+  it("leaves the in-progress segment's label unchanged on blank dictation text, and no-ops when nothing is running", () => {
+    const tracker = new WorkTracker();
+    const t0 = new Date(2026, 8, 3, 9, 0, 0).getTime();
+
+    assert.equal(tracker.setCurrentSegmentLabel("New Label"), false);
+
+    tracker.start("Old Label", t0);
+    assert.equal(tracker.setCurrentSegmentLabel("   "), false);
+    assert.equal(tracker.currentSegment.label, "Old Label");
+  });
+
   it("keeps a segment that runs past midnight under the day it started, not the day it ended", () => {
     const tracker = new WorkTracker();
     const startTime = new Date(2026, 8, 3, 23, 45, 0).getTime(); // 11:45 PM Sep 3

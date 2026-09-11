@@ -116,7 +116,7 @@ function draw(offsetY = 0) {
     const seg = daySegs[segIdx];
     const mergeUp = segIdx > 0 ? "/ Merge Up \\" : "";
     const mergeDown = segIdx < daySegs.length - 1 ? "\\ Merge Down /" : "";
-    const status = "SELECT: Label, Hold: Delete";
+    const status = "SELECT: Delete, Hold: Label";
     lines = getSummaryLines(mergeUp, seg.label, seg.durationMs, status, mergeDown);
   } else {
     lines = getTodayLines();
@@ -357,30 +357,45 @@ function handleSegmentAction(direction) {
 let segmentDictation = null;
 let dictationDayKey = null;
 let dictationSegmentId = null;
+let dictationTargetsCurrent = false;
+function ensureSegmentDictation() {
+  if (segmentDictation) return;
+  segmentDictation = new Dictation({
+    // The Dictation system UI consumes whatever button press dismisses
+    // it (e.g. confirming the transcription), so control can return to
+    // our button handler mid-press-cycle - the next event we see is a
+    // release with no matching in-app press, exactly like the stale
+    // launch-button release handled by pressedSinceLaunch above. Re-arm
+    // the same guard here so that stale release is discarded instead of
+    // being treated as a fresh short-press that restarts dictation.
+    onReadable() {
+      pressedSinceLaunch.select = false;
+      const text = this.read();
+      if (dictationTargetsCurrent) tracker.setCurrentSegmentLabel(text);
+      else tracker.setSegmentLabel(dictationDayKey, dictationSegmentId, text);
+      save();
+      draw();
+    },
+    onError() {
+      pressedSinceLaunch.select = false;
+      draw();
+    }
+  });
+}
+
 function startSegmentLabelDictation() {
   dictationDayKey = segActionsDayKey;
   dictationSegmentId = segActionsSegmentId;
-  if (!segmentDictation) {
-    segmentDictation = new Dictation({
-      // The Dictation system UI consumes whatever button press dismisses
-      // it (e.g. confirming the transcription), so control can return to
-      // our button handler mid-press-cycle - the next event we see is a
-      // release with no matching in-app press, exactly like the stale
-      // launch-button release handled by pressedSinceLaunch above. Re-arm
-      // the same guard here so that stale release is discarded instead of
-      // being treated as a fresh short-press that restarts dictation.
-      onReadable() {
-        pressedSinceLaunch.select = false;
-        tracker.setSegmentLabel(dictationDayKey, dictationSegmentId, this.read());
-        save();
-        draw();
-      },
-      onError() {
-        pressedSinceLaunch.select = false;
-        draw();
-      }
-    });
-  }
+  dictationTargetsCurrent = false;
+  ensureSegmentDictation();
+  segmentDictation.start();
+}
+
+// Labels the in-progress timer from the base Today view (long-press
+// SELECT while timing), reusing the same singleton Dictation instance.
+function startCurrentSegmentLabelDictation() {
+  dictationTargetsCurrent = true;
+  ensureSegmentDictation();
   segmentDictation.start();
 }
 
@@ -473,11 +488,12 @@ function generateRandomTestPastDay() {
 }
 */
 
-// Long-press SELECT while the Segment Actions menu is open deletes the
-// menu's segment. Detected by measuring press duration on release
+// Long-press SELECT triggers dictation (Segment Actions menu, or the
+// base Today view while a timer is running); short-press SELECT deletes
+// the menu's segment. Detected by measuring press duration on release
 // (rather than a separate setTimeout/closure) to keep this cheap under
 // this app's tight 128KB code+heap budget.
-const DELETE_LONG_PRESS_MS = 600;
+const LONG_PRESS_MS = 600;
 let selectPressStartMs = 0;
 
 new Button({
@@ -492,12 +508,17 @@ new Button({
     if (animTimer) return; // ignore input mid-animation
     if (type === "select") {
       if (currentView === "SEGMENT_ACTIONS") {
-        if (Date.now() - selectPressStartMs >= DELETE_LONG_PRESS_MS) handleSegmentAction(0);
-        else startSegmentLabelDictation();
+        if (Date.now() - selectPressStartMs >= LONG_PRESS_MS) startSegmentLabelDictation();
+        else handleSegmentAction(0);
         return;
       }
-      if (currentView === "TODAY") handleStartStopTimer();
-      else if (currentView === "PAST_DAYS") switchView("PAST_DAY_SEGMENTS", () => { pastDaySegIdx = 0; });
+      if (currentView === "TODAY") {
+        if (tracker.isTiming() && Date.now() - selectPressStartMs >= LONG_PRESS_MS) {
+          startCurrentSegmentLabelDictation();
+        } else {
+          handleStartStopTimer();
+        }
+      } else if (currentView === "PAST_DAYS") switchView("PAST_DAY_SEGMENTS", () => { pastDaySegIdx = 0; });
       else if (currentView === "TODAY_SEGMENTS" || currentView === "PAST_DAY_SEGMENTS") {
         // Enter the Segment Actions menu for the currently shown segment,
         // pinning down which day/segment its actions apply to (inlined

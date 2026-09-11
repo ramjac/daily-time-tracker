@@ -158,7 +158,7 @@ cause of mysterious crashes.
   a `pebble` subcommand) — use `ps aux | grep qemu-pebble` to find the PIDs
   and pass them directly to `kill <PID>` instead.
 
-## Launch-button stale-press handling
+## Stale-press guard: a general pattern, not just app launch
 
 - When the app is (re)launched by a physical button press (e.g. Select from
   the launcher, or reopening right after Back), that button can still be
@@ -173,3 +173,23 @@ cause of mysterious crashes.
   all releases for 500ms") — a time-based guard has zero benefit for buttons
   already up at launch and can still swallow a genuinely fast real press within
   the window.
+- **This same guard is needed any time control returns to a screen that
+  listens for Select (or another button) but the button's press half was
+  consumed by something other than that screen's own handler.** App launch is
+  one instance of this; system UI hand-off is another — e.g. `Dictation`
+  consumes whichever button press confirms/dismisses its system UI, so when
+  the app's `Button` handler resumes, the next event it sees is a release with
+  no matching in-app press. Left unguarded, that stray release was
+  misinterpreted as a fresh short press and immediately restarted dictation
+  (fixed by resetting `pressedSinceLaunch.select = false` in both the
+  `onReadable` and `onError` Dictation callbacks, re-arming the guard right
+  before control returns to the app).
+- **Rule of thumb**: whenever a view/screen is entered as a side effect of
+  something other than the user's in-app navigation to it (app launch,
+  returning from a system dictation/picker UI, or any other hand-off where an
+  external component may have eaten a press or release), and that view reads
+  Select (or another button) immediately, apply the same
+  `pressedSinceLaunch[type] = false` re-arm at the hand-off point before the
+  view's button handler can run. Don't rely on a fixed-time debounce window
+  for this class of bug — it's a press/release *pairing* problem, not a
+  timing problem.

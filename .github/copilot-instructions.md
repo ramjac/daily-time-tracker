@@ -284,7 +284,7 @@ cause of mysterious crashes.
   "arm, don't act" (see below), sending several `emu-button click select` in
   a row without checking a screenshot in between can land on the wrong
   screen or misfire an unrelated action (e.g. accidentally triggering the
-  Segment Actions long-press-to-delete threshold). Screenshot after every
+  Segment Actions press-to-delete threshold). Screenshot after every
   button press when testing this flow, and only send the next press once the
   current screen is confirmed.
 

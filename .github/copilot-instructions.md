@@ -18,7 +18,7 @@ This is a RePebble Alloy/Moddable XS app with two JavaScript runtimes and a smal
 - `src/embeddedjs/timerCore.js` contains the platform-independent timer domain model and formatting helpers. `WorkTracker` stores completed segments by local `YYYY-MM-DD` day key and optionally one active segment.
 - `src/embeddedjs/manifest.json` wires the watch-side JavaScript modules into the Moddable build.
 - `src/pkjs/index.js` is the phone-side PebbleKit JS process. It translates watch AppMessage actions into Pebble Timeline pin insert/delete operations.
-- `wscript` loads the Pebble SDK, compiles the C sources once per target platform, and bundles the phone-side JavaScript. `package.json` defines the app UUID, Moddable project type, SDK version, target platforms, and message/resource metadata.
+- `wscript` loads the Pebble SDK, compiles the C sources once per target platform, and bundles the phone-side JavaScript. `package.json` defines the app UUID, Moddable project type, SDK version, target platforms, and Pebble resource metadata, including any custom button-prompt icon assets added to the watch app.
 
 The normal data flow is: button/dictation input on the watch -> `WorkTracker` state in `main.js` -> localStorage persistence -> AppMessage for completed or changed segments -> phone-side Timeline pin synchronization. The active timer is displayed from timestamp deltas on a one-second interval rather than from an accumulating counter.
 
@@ -31,6 +31,7 @@ The normal data flow is: button/dictation input on the watch -> `WorkTracker` st
 - Keep Timeline synchronization actions and payloads aligned between `main.js` and `src/pkjs/index.js`: `INSERT_TIMELINE_PIN` and `DELETE_TIMELINE_PIN`, with segment `id`, `label`, `startTime`, and `durationMs`.
 - Both screen shapes are supported in the same watch UI. Use the existing `device.screen.shape === "round"` check and safe padding differences when changing layouts.
 - The UI uses the four hardware button names (`up`, `down`, `select`, `back`) and explicit view state values (`TODAY`, `TODAY_SEGMENTS`, `PAST_DAYS`, `SEGMENT_ACTIONS`) for navigation.
+- Keep watch-side icon assets in the Pebble resource pipeline: declare them in `package.json` under `pebble.resources.media`, give them stable semantic names that match their button/action role, and reference those same semantics consistently from `src/embeddedjs/main.js`.
 - When changing time behavior, account for local date boundaries and clock/timestamp deltas; do not introduce a continuously incremented elapsed-time accumulator.
 - The generated `build/` directory is ignored and should not be edited or used as the source of truth.
 
@@ -58,11 +59,12 @@ All Pebble devices share a fixed four-button layout:
 ### 2. Spatial Affordance & UI Alignment
 - **Direct Physical Mapping:** Any icon, action label, or directional indicator tied to a hardware button MUST be positioned immediately adjacent to that physical button.
 - **Right-Edge Anchoring:**
-  - Prefer using native `ActionBarLayer` docked to the right edge (`ACTION_BAR_WIDTH`) to display action icons mapped directly to UP, SELECT, and DOWN.
-  - If building custom UI layers, align right-hand action prompts flush right:
+  - This app renders its UI in watch-side JavaScript with Poco, not Pebble C `ActionBarLayer`/`MenuLayer` widgets, so button prompts should be drawn by the existing Poco render path in `src/embeddedjs/main.js`.
+  - Align right-hand icons or labels flush right:
     - Top-right ➔ Action for UP button.
     - Middle-right ➔ Action for SELECT button.
     - Bottom-right ➔ Action for DOWN button.
+  - Prefer the app's custom Pebble resource icons for those prompts instead of ASCII arrows or generic placeholder text when an icon already exists for that action.
 - **Left-Edge Anchoring:**
   - Avoid placing critical action prompts on the left edge unless they explicitly relate to cancelling/dismissing or exiting the current view.
 - **No Mobile/Touch Patterns:**
@@ -70,11 +72,11 @@ All Pebble devices share a fixed four-button layout:
   - Do NOT assume touchscreen interaction; users interact purely via the 4 physical buttons.
   - Do NOT center action labels if they correspond to specific hardware inputs—offset them toward the relevant edge to maintain visual affordance.
 
-### 3. Native Layer Preference
-- Use `ActionBarLayer` or `ActionMenu` for single-screen contextual actions rather than custom floating labels.
-- Use `MenuLayer` or `SimpleMenuLayer` when actions exceed 3 choices (allowing UP/DOWN navigation and SELECT execution).
-- When implementing a custom canvas/graphics layer (`LayerUpdateProc`), draw visual carets or hints using the system provided icons for "up", "down", "checkmark", "pencil", "elipsis", "play", and "stop" along the right margin vertically centered against the respective button positions.
-- When implementing a visual caret for delete or cancel draw it on the left side using the system provided "trash" or "cross". Back is an action that is always assumed to be available and does not need a drawn icon or label on the screen.
+### 3. Prompt rendering preference
+- Prefer the existing Poco-based watch UI in `src/embeddedjs/main.js` over introducing Pebble C UI layers such as `ActionBarLayer`, `ActionMenu`, `MenuLayer`, or `SimpleMenuLayer`.
+- Load and reuse custom Pebble resource icons once, then draw them near the matching hardware button position rather than rebuilding per-frame prompt art ad hoc.
+- Keep the icon set semantically consistent across screens: up/down for paging, check/play/stop for select-driven actions, pencil for relabel/edit flows, and trash/cross for destructive or cancel affordances.
+- Delete/cancel icons belong on the left edge only when they truly map to Back/cancel behavior. Back remains implicit in most views and usually does not need an extra on-screen label.
 
 ## Rendering: prefer Poco over Piu
 

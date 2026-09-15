@@ -10,10 +10,9 @@ function save() { localStorage.setItem(STORAGE_KEY, tracker.serialize()); }
 const render = new Poco(screen);
 const pad = screen.round ? 28 : 10;
 const LINE_GAP = 6;
-// Extra spacing (in addition to LINE_GAP) between the Up/Down nav hints
-// on the base Today view and the central timer content, so the nav text
-// sits further from the middle of the screen and the timer gets breathing
-// room around it.
+// Extra spacing (in addition to LINE_GAP) pushing the current status/
+// elapsed-time line further away from the central timer duration, so the
+// duration keeps its breathing room.
 const NAV_GAP = LINE_GAP + 14;
 
 // Fonts & colors are created once and reused across every redraw.
@@ -27,6 +26,168 @@ const white = render.makeColor(255, 255, 255);
 const gray = render.makeColor(136, 136, 136);
 const orange = render.makeColor(255, 170, 0);
 const blue = render.makeColor(85, 170, 255);
+
+// Button-affordance icons (see package.json resources.media), used
+// instead of text/arrow nav hints so each prompt sits directly next to
+// the physical button it represents (right edge for Up/Select/Down, left
+// edge for Back), per the app's hardware-driven UI convention. Each icon
+// is pre-recolored & loaded once here; `w`/`h` mirror the exact source
+// PNG pixel dimensions (see resources/images/) rather than trusting a
+// runtime-reported bitmap size.
+// PebbleBitmap takes the resource's *numeric* pbpack id, not its
+// package.json media "name" string (confirmed against Moddable's own
+// hellopoco-gbitmap example) - passing the name string builds fine but
+// throws "not found" at runtime, before the app even starts. These
+// numbers are simply each entry's 1-based position in package.json's
+// resources.media array (id 0 is reserved for DEFAULT_MENU_ICON) - see
+// the generated build/<platform>/src/resource_ids.auto.h for the
+// authoritative mapping if media entries are ever reordered/added to.
+const ICONS = {
+  up: { bmp: new Poco.PebbleBitmap(1), w: 12, h: 7 },
+  down: { bmp: new Poco.PebbleBitmap(2), w: 12, h: 7 },
+  check: { bmp: new Poco.PebbleBitmap(5), w: 17, h: 14 },
+  play: { bmp: new Poco.PebbleBitmap(6), w: 10, h: 14 },
+  pause: { bmp: new Poco.PebbleBitmap(7), w: 12, h: 14 },
+  delete: { bmp: new Poco.PebbleBitmap(8), w: 14, h: 14 },
+  edit: { bmp: new Poco.PebbleBitmap(9), w: 14, h: 14 },
+  dismiss: { bmp: new Poco.PebbleBitmap(10), w: 14, h: 14 },
+  ellipsis: { bmp: new Poco.PebbleBitmap(11), w: 16, h: 4 },
+  stop: { bmp: new Poco.PebbleBitmap(12), w: 12, h: 14 }
+};
+
+// Draws the Up/Down/Select/Back button-affordance icons for the current
+// view, anchored to the screen edge nearest their physical button: Up at
+// top-right, Select (with an optional stacked long-press hint icon, e.g.
+// Pencil for "hold to label") vertically centered at the right edge,
+// Down at bottom-right, and Back (only shown for a genuine
+// cancel/dismiss affordance) vertically centered at the left edge.
+// On the round (gabbro) display, the drawable area tapers away from the
+// vertical center, so a fixed right/left-edge x anchored icon near the
+// top or bottom corner (e.g. Up/Down) can fall outside the circular
+// mask and silently fail to render. These helpers compute the x
+// position of the safe right/left edge at a given icon's vertical
+// center, following the circle inset by `pad`, so corner icons stay
+// just inside the visible round area. On rectangular (emery) screens
+// they reduce to the simple fixed-edge-minus-pad position.
+function safeRightX(iconW, iconH, y) {
+  if (!screen.round) return render.width - pad - iconW;
+  const cx = render.width / 2;
+  const r = cx - pad;
+  const dy = y + iconH / 2 - render.height / 2;
+  const maxDx = Math.sqrt(Math.max(0, r * r - dy * dy));
+  return Math.round(cx + maxDx - iconW);
+}
+
+function safeLeftX(iconH, y) {
+  if (!screen.round) return pad;
+  const cx = render.width / 2;
+  const r = cx - pad;
+  const dy = y + iconH / 2 - render.height / 2;
+  const maxDx = Math.sqrt(Math.max(0, r * r - dy * dy));
+  return Math.round(cx - maxDx);
+}
+
+// Draws a plain text button hint (no icon), right-anchored at the given
+// y using the same edge-safe positioning as icon hints. Used for the
+// merge actions ("merge prev"/"merge next") - a bare up/down-arrow icon
+// (reused from paging) read ambiguously as "navigate" rather than "merge
+// with adjacent segment", so these two specific actions use text only.
+function drawTextHint(label, y) {
+  const textWidth = render.getTextWidth(label, fontSmall);
+  const x = safeRightX(textWidth, fontSmall.height, y);
+  render.drawText(label, fontSmall, blue, x, y);
+}
+
+function drawViewIcons(icons) {
+  if (icons.up) {
+    if (icons.up === "mergePrev" || icons.up === "mergeNext") {
+      drawTextHint(icons.up === "mergePrev" ? "merge prev" : "merge next", pad);
+    } else {
+      const s = ICONS[icons.up];
+      render.drawBitmap(s.bmp, safeRightX(s.w, s.h, pad), pad);
+    }
+  }
+  if (icons.down) {
+    if (icons.down === "mergePrev" || icons.down === "mergeNext") {
+      const y = render.height - pad - fontSmall.height;
+      drawTextHint(icons.down === "mergePrev" ? "merge prev" : "merge next", y);
+    } else {
+      const s = ICONS[icons.down];
+      const y = render.height - pad - s.h;
+      render.drawBitmap(s.bmp, safeRightX(s.w, s.h, y), y);
+    }
+  }
+  if (icons.select) {
+    const s = ICONS[icons.select];
+    const hint = icons.selectHint ? ICONS[icons.selectHint] : null;
+    // Gap between the primary Select icon and its stacked long-press
+    // hint icon (e.g. Play/Pause above a Pencil hinting Hold-to-label):
+    // a full icon-height of blank space reads as a clear visual break
+    // between the two distinct actions.
+    const gap = hint ? s.h : 0;
+    const totalH = s.h + (hint ? gap + hint.h : 0);
+    let y = Math.round((render.height - totalH) / 2);
+    render.drawBitmap(s.bmp, safeRightX(s.w, s.h, y), y);
+    if (hint) {
+      y += s.h + gap;
+      render.drawBitmap(hint.bmp, safeRightX(hint.w, hint.h, y), y);
+    }
+  }
+  if (icons.back) {
+    const s = ICONS[icons.back];
+    const y = Math.round((render.height - s.h) / 2);
+    render.drawBitmap(s.bmp, safeLeftX(s.h, y), y);
+  }
+}
+
+// Determines which button icons apply to the current view/state. Kept
+// as its own function (rather than folded into each line-builder) so
+// slide/bounce animation frames can redraw the icon set without
+// recomputing content lines.
+function getViewIcons() {
+  if (currentView === "TODAY") {
+    const segs = tracker.getDaySegments(getDayKey(Date.now()));
+    const timing = tracker.isTiming();
+    return {
+      up: segs.length > 0 ? "up" : null,
+      down: pastDayKeys.length > 0 ? "down" : null,
+      select: timing ? "stop" : "play",
+      selectHint: timing ? "edit" : null
+    };
+  }
+  if (currentView === "TODAY_SEGMENTS") {
+    return { up: todaySegIdx > 0 ? "up" : null, down: "down", select: "ellipsis" };
+  }
+  if (currentView === "PAST_DAYS") {
+    return {
+      up: "up",
+      down: pastDayIdx < pastDayKeys.length - 1 ? "down" : null,
+      select: "ellipsis"
+    };
+  }
+  if (currentView === "PAST_DAY_SEGMENTS") {
+    const segs = tracker.getDaySegments(pastDayKeys[pastDayIdx]);
+    return {
+      up: pastDaySegIdx > 0 ? "up" : null,
+      down: segs && pastDaySegIdx < segs.length - 1 ? "down" : null,
+      select: "ellipsis"
+    };
+  }
+  if (currentView === "SEGMENT_ACTIONS") {
+    const daySegs = tracker.getDaySegments(segActionsDayKey);
+    const segIdx = daySegs.findIndex((s) => s.id === segActionsSegmentId);
+    return {
+      up: segIdx > 0 ? "mergePrev" : null,
+      down: segIdx < daySegs.length - 1 ? "mergeNext" : null,
+      select: "delete",
+      selectHint: "edit"
+    };
+  }
+  if (currentView === "SEGMENT_DELETE_CONFIRM") {
+    return { select: "check", back: "dismiss" };
+  }
+  return {};
+}
 
 let currentView = "TODAY";
 let pastDayKeys = [];
@@ -91,6 +252,7 @@ function drawLines(lines, offsetY = 0) {
   render.begin();
   render.fillRectangle(black, 0, 0, render.width, render.height);
   paintLines(lines, offsetY);
+  drawViewIcons(getViewIcons());
   render.end();
 }
 
@@ -111,20 +273,15 @@ function draw(offsetY = 0) {
     // currentView immediately) - so the acted-on segment is always
     // present here; no null-fallback needed (inlined for the same
     // reason as the Select-handler's Segment Actions entry above).
-    const daySegs = tracker.getDaySegments(segActionsDayKey);
-    const segIdx = daySegs.findIndex((s) => s.id === segActionsSegmentId);
-    const seg = daySegs[segIdx];
-    const mergeUp = segIdx > 0 ? "/ Merge Up \\" : "";
-    const mergeDown = segIdx < daySegs.length - 1 ? "\\ Merge Down /" : "";
-    const status = "SELECT: Delete, Hold: Label";
-    lines = getSummaryLines(mergeUp, seg.label, seg.durationMs, status, mergeDown);
+    const seg = tracker.getDaySegments(segActionsDayKey).find((s) => s.id === segActionsSegmentId);
+    lines = getSummaryLines(seg.label, seg.durationMs);
   } else if (currentView === "SEGMENT_DELETE_CONFIRM") {
     // Same not-null-checked reasoning as the SEGMENT_ACTIONS branch above -
     // this view is only reached right after a valid segment is selected
     // there, and only left via confirm/cancel (which change currentView
     // immediately).
     const seg = tracker.getDaySegments(segActionsDayKey).find((s) => s.id === segActionsSegmentId);
-    lines = getSummaryLines("", seg.label, seg.durationMs, "SELECT: Confirm Delete", "BACK: Cancel");
+    lines = getSummaryLines(seg.label, seg.durationMs);
   } else {
     lines = getTodayLines();
   }
@@ -133,36 +290,30 @@ function draw(offsetY = 0) {
 
 // Shared line-builder for the 5-line "summary" layout used by Today,
 // past-day, and Segment Actions views alike: a top nav hint, a small
-// label hugging the big duration, the duration itself, a secondary
-// status line, and a bottom nav hint - each pushed away from the center
-// by NAV_GAP so the central duration keeps its breathing room. Factored
-// out so the three callers don't duplicate this bytecode, which matters
-// under this app's tight 128KB code+heap budget.
-function getSummaryLines(topNav, label, totalMs, status, bottomNav) {
+// label hugging the big duration, the duration itself, and an optional
+// informational extra line (real data, e.g. "3 timespans" - never a
+// button hint, since those are conveyed by the edge-anchored icons drawn
+// in drawViewIcons() instead). Factored out so callers don't duplicate
+// this bytecode, which matters under this app's tight 128KB code+heap
+// budget.
+function getSummaryLines(label, totalMs, extra) {
   return [
-    { text: topNav, font: fontSmall, color: blue, gap: NAV_GAP },
     { text: label, font: fontSmall, color: gray, gap: 2 },
-    { text: formatDuration(totalMs / 1000), font: fontBig, color: white },
-    { text: status, font: fontSmall, color: orange, gap: NAV_GAP },
-    { text: bottomNav, font: fontSmall, color: gray }
+    { text: formatDuration(totalMs / 1000), font: fontBig, color: white, gap: extra ? NAV_GAP : LINE_GAP },
+    { text: extra || "", font: fontSmall, color: orange }
   ];
 }
 
 function getTodayLines() {
   const todayKey = getDayKey(Date.now());
-  const segs = tracker.getDaySegments(todayKey);
   const totalMs = tracker.getDayTotalMs(todayKey);
-  const nav = segs.length > 0 ? `/ ${segs.length} timespan${segs.length === 1 ? "" : "s"} \\` : "";
   const timing = tracker.isTiming();
   const label = timing ? tracker.currentSegment.label : "Today's total";
-  const status = timing
-    ? `SELECT: Stop (${formatDuration(tracker.getElapsedCurrentMs() / 1000)})`
-    : "SELECT: Start";
-  // While timing, surface the long-press-to-label hint in place of the
-  // History nav (which is less useful mid-timer anyway) so it fits
-  // without lengthening the status line beyond the screen width.
-  const bottomNav = timing ? "Hold: Label" : (pastDayKeys.length > 0 ? "\\ History /" : "");
-  return getSummaryLines(nav, label, totalMs, status, bottomNav);
+  // Real elapsed-time info for the running segment (not a button hint -
+  // Play/Pause and the Hold-to-label Pencil hint are conveyed by the
+  // icons drawn via getViewIcons()/drawViewIcons()).
+  const extra = timing ? formatDuration(tracker.getElapsedCurrentMs() / 1000) : "";
+  return getSummaryLines(label, totalMs, extra);
 }
 
 // Clamps a paging index into [0, len-1], used whenever the underlying
@@ -176,28 +327,17 @@ function clampIdx(idx, len) {
 // Shared line-builder for a single-segment detail view (used by both
 // Today's segments and a past day's segments) - factored out so the two
 // callers don't duplicate this bytecode, which matters under this app's
-// tight 128KB code+heap budget.
-// Adds the same wrapped-arrow nav hints used elsewhere in the app: Up
-// pages to an earlier segment ("Previous", hidden at the first segment
-// since there's nothing earlier - Up just bounces there), while Down
-// normally pages to a later segment ("Next", hidden at the last segment
-// unless bottomExitLabel is given) except at the last segment of Today's
-// segments view, where Down instead exits back to the base Today view -
-// bottomExitLabel (only passed by getTodaySegmentsLines) swaps the bottom
-// hint to match that special case.
-function getSegmentDetailLines(segs, idx, bottomExitLabel) {
+// tight 128KB code+heap budget. Paging affordances (Up = previous, Down =
+// next, or - for Today's segments - back to Today) are conveyed by the
+// edge-anchored icons from getViewIcons()/drawViewIcons(), not by text
+// here.
+function getSegmentDetailLines(segs, idx) {
   const seg = segs[idx];
-  const atStart = idx === 0;
-  const atEnd = idx === segs.length - 1;
-  const topNav = atStart ? "" : "/ Previous \\";
-  const bottomNav = atEnd ? (bottomExitLabel ? `\\ ${bottomExitLabel} /` : "") : "\\ Next /";
   return [
-    { text: topNav, font: fontSmall, color: blue, gap: NAV_GAP },
     { text: `${idx + 1} of ${segs.length}`, font: fontSmall, color: blue },
     { text: formatDuration(seg.durationMs / 1000), font: fontBig, color: white },
     { text: seg.label, font: fontSmall, color: white },
-    { text: `${formatTimeOfDay(seg.startTime)} - ${formatTimeOfDay(seg.stopTime)}`, font: fontSmall, color: orange, gap: NAV_GAP },
-    { text: bottomNav, font: fontSmall, color: gray }
+    { text: `${formatTimeOfDay(seg.startTime)} - ${formatTimeOfDay(seg.stopTime)}`, font: fontSmall, color: orange, gap: NAV_GAP }
   ];
 }
 
@@ -209,7 +349,7 @@ function getTodaySegmentsLines() {
   const segs = tracker.getDaySegments(todayKey);
   if (segs.length === 0) return null;
   todaySegIdx = clampIdx(todaySegIdx, segs.length);
-  return getSegmentDetailLines(segs, todaySegIdx, "Today");
+  return getSegmentDetailLines(segs, todaySegIdx);
 }
 
 // Returns null when there are no past days (caller falls back to the base
@@ -220,10 +360,8 @@ function getPastDayLines() {
   const key = pastDayKeys[pastDayIdx];
   const segs = tracker.getDaySegments(key);
   const totalMs = tracker.getDayTotalMs(key);
-  const topNav = pastDayIdx === 0 ? "/ Today \\" : "/ Next \\";
-  const bottomNav = pastDayIdx === pastDayKeys.length - 1 ? "" : "\\ Previous /";
   const status = `${segs.length} timespan${segs.length === 1 ? "" : "s"}`;
-  return getSummaryLines(topNav, key, totalMs, status, bottomNav);
+  return getSummaryLines(key, totalMs, status);
 }
 
 // Segments for whichever past day is currently selected in PAST_DAYS
@@ -285,6 +423,10 @@ function animStep() {
   render.fillRectangle(black, 0, 0, render.width, render.height);
   paintLines(slideOldLines, oldOffset);
   paintLines(slideNewLines, newOffset);
+  // Icons reflect currentView, which is already the destination view by
+  // the time a slide starts (see slideTransition()) - they stay fixed at
+  // their edge position rather than sliding with the content.
+  drawViewIcons(getViewIcons());
   render.end();
   animStepIdx++;
   animTimer = setTimeout(animStep, SLIDE_FRAME_MS);

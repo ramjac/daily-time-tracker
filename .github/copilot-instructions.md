@@ -78,6 +78,69 @@ All Pebble devices share a fixed four-button layout:
 - Keep the icon set semantically consistent across screens: up/down for paging, check/play/stop for select-driven actions, pencil for relabel/edit flows, and trash/cross for destructive or cancel affordances.
 - Delete/cancel icons belong on the left edge only when they truly map to Back/cancel behavior. Back remains implicit in most views and usually does not need an extra on-screen label.
 
+### 4. Established icon set and semantics (do not repurpose without reason)
+The app's button-affordance icons are pre-recolored PNGs sourced from Pebble's
+official App Assets guide (`developer.repebble.com/guides/app-resources/app-assets/`),
+loaded once into the `ICONS` table in `src/embeddedjs/main.js` and referenced by
+numeric pbpack resource ID (see `package.json`'s `pebble.resources.media` array —
+entries there are positional/1-based and must only ever be **appended**, never
+reordered, or existing `new Poco.PebbleBitmap(id)` references elsewhere in
+`main.js` will silently point at the wrong image). Current semantic assignments,
+established through iterative user feedback this session — preserve these unless
+a screen's meaning genuinely changes:
+
+| Icon | Color | Meaning | Used in |
+|---|---|---|---|
+| `up` / `down` (arrows) | blue | Paging through a list (segments/days) | TODAY_SEGMENTS, PAST_DAYS, PAST_DAY_SEGMENTS, TODAY (has-history hint) |
+| `ellipsis` (3 dots) | blue | Select drills into a submenu while paging a list | TODAY_SEGMENTS, PAST_DAYS, PAST_DAY_SEGMENTS |
+| `check` | orange | Select performs a genuine, discrete confirm action (not submenu navigation) | SEGMENT_DELETE_CONFIRM |
+| `play` / `stop` | orange | Start/stop the active timer | TODAY (stopped/running) |
+| `edit` (pencil) | gray | Long-press hint: relabel the current item | TODAY (while timing), SEGMENT_ACTIONS |
+| `delete` (trash) | orange | Select deletes the current segment | SEGMENT_ACTIONS |
+| `dismiss` (cross) | gray | Back cancels/declines a confirm prompt | SEGMENT_DELETE_CONFIRM |
+
+**Ellipsis vs. check is a deliberate, meaningful split** — don't collapse them
+back to one icon. Ellipsis means "select this to go deeper into a list/menu";
+check means "select this to confirm/finalize an action." When adding a new
+paging/list screen, default to ellipsis for its Select icon unless it is a true
+yes/no confirmation.
+
+**Merge actions use text, not icons.** The Segment Actions screen's Up/Down
+merge-with-adjacent-segment actions were originally drawn with reused
+paging/merge arrow icons, but that read ambiguously as "navigate" rather than
+"merge." They now render as plain right-anchored text labels — "merge prev" /
+"merge next" (see `drawTextHint()` in `main.js`) — using `fontSmall` in blue, at
+the same top-right/bottom-right button-adjacent positions icons would occupy.
+Follow this precedent for any future action whose icon-only meaning proves
+ambiguous in testing: prefer a short, right-anchored text label over stretching
+an existing icon's semantics or inventing a new icon.
+
+**Select + long-press hint stacking.** When a view's Select button has both a
+short-press action and a distinct long-press ("hold") action (e.g. Stop above
+Edit, or Delete above Edit), draw the short-press icon **above** the long-press
+hint icon, both vertically centered as a group at the right edge, with a full
+icon-height of blank space between them (`drawViewIcons()`'s `gap = hint ? s.h : 0`).
+This full-icon-height buffer was arrived at after two rounds of feedback (a
+fixed 4px gap, then 1/3 icon height, were both judged too tight) — don't
+regress to a smaller gap without a specific reason.
+
+## Duration/time display formatting
+`formatDuration()` in `src/embeddedjs/timerCore.js` uses a single consistent
+rule for every duration shown in the app (current elapsed time, segment
+durations, daily totals): space-separated, each shown unit suffixed with its
+own unit letter, no colons, and the leading unit is never zero-padded (only the
+trailing/smallest shown unit is zero-padded):
+- **Durations under 1 hour**: minutes and seconds only, e.g. `12m 35s`.
+- **Durations 1 hour or more**: hours and minutes only (seconds are dropped
+  entirely), e.g. `3h 6m`.
+
+This format was chosen after explicitly comparing alternatives (colon+suffix
+hybrids, fully compact no-space forms, single-largest-unit-only) — the
+consistent "value+letter, space-separated, no colon" style was preferred for
+readability on the small display. When adding any new place that displays a
+duration, reuse `formatDuration()` rather than hand-rolling another format, so
+all screens stay visually consistent.
+
 ## Rendering: prefer Poco over Piu
 
 - This app renders with **Poco** (`commodetto/Poco`), procedural/immediate-mode

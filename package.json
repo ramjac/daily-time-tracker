@@ -26,7 +26,20 @@
       "durationMs"
     ],
     "resources": {
-      "media": []
+      "media": [
+        { "type": "bitmap", "name": "ICON_UP", "file": "images/icon_up.png" },
+        { "type": "bitmap", "name": "ICON_DOWN", "file": "images/icon_down.png" },
+        { "type": "bitmap", "name": "ICON_MERGE_UP", "file": "images/icon_merge_up.png" },
+        { "type": "bitmap", "name": "ICON_MERGE_DOWN", "file": "images/icon_merge_down.png" },
+        { "type": "bitmap", "name": "ICON_CHECK", "file": "images/icon_check.png" },
+        { "type": "bitmap", "name": "ICON_PLAY", "file": "images/icon_play.png" },
+        { "type": "bitmap", "name": "ICON_PAUSE", "file": "images/icon_pause.png" },
+        { "type": "bitmap", "name": "ICON_DELETE", "file": "images/icon_delete.png" },
+        { "type": "bitmap", "name": "ICON_EDIT", "file": "images/icon_edit.png" },
+        { "type": "bitmap", "name": "ICON_DISMISS", "file": "images/icon_dismiss.png" },
+        { "type": "bitmap", "name": "ICON_ELLIPSIS", "file": "images/icon_ellipsis.png" },
+        { "type": "bitmap", "name": "ICON_STOP", "file": "images/icon_stop.png" }
+      ]
     }
   }
 }

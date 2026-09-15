@@ -11,8 +11,12 @@ export function formatDuration(totalSeconds) {
   const hrs = Math.floor(s / 3600);
   const mins = Math.floor((s % 3600) / 60);
   const secs = s % 60;
-  if (hrs > 0) return `${pad2(hrs)}:${pad2(mins)}:${pad2(secs)}`;
-  return `${pad2(mins)}:${pad2(secs)}`;
+  // Short durations (< 1hr) show minutes and seconds, each labeled with
+  // its own unit letter; long durations (>= 1hr) drop seconds entirely
+  // and show hours and minutes, each labeled - keeps the display compact
+  // on the watch's small screen while staying unambiguous at a glance.
+  if (hrs > 0) return `${hrs}h ${mins}m`;
+  return `${mins}m ${pad2(secs)}s`;
 }
 
 // Reused across every call instead of `new Date(timestamp)` per call: this

@@ -39,10 +39,42 @@ The normal data flow is: button/dictation input on the watch -> `WorkTracker` st
 - The watch display is a 64-color e-ink (Sharp memory-LCD style) panel, not a
   backlit LCD/OLED — expect limited color fidelity and no true blacks/deep
   contrast beyond what the 64-color palette provides.
-- The screen refreshes at roughly 30 frames per second at most. Don't design
+- The screen refreshes at roughly 30 frames per second. Don't design
   animations or update loops assuming faster/smoother redraws than that; rapid
   full-screen redraws also cost battery and CPU on already-constrained
   hardware.
+
+## Hardware-Driven UI & Layout Rules (Pebble Platform)
+
+### 1. Physical Hardware Mapping
+All Pebble devices share a fixed four-button layout:
+- **Left Side:**
+  - `BUTTON_ID_BACK`: Single hardware button. Reserved for back navigation, cancel, or popping the current window.
+- **Right Side (Top to Bottom):**
+  - `BUTTON_ID_UP`: Top button. Reserved for scrolling up, incrementing values, or contextual top-action.
+  - `BUTTON_ID_SELECT`: Middle button. Primary confirmation, toggling state, or opening context menus.
+  - `BUTTON_ID_DOWN`: Bottom button. Reserved for scrolling down, decrementing values, or contextual bottom-action.
+
+### 2. Spatial Affordance & UI Alignment
+- **Direct Physical Mapping:** Any icon, action label, or directional indicator tied to a hardware button MUST be positioned immediately adjacent to that physical button.
+- **Right-Edge Anchoring:**
+  - Prefer using native `ActionBarLayer` docked to the right edge (`ACTION_BAR_WIDTH`) to display action icons mapped directly to UP, SELECT, and DOWN.
+  - If building custom UI layers, align right-hand action prompts flush right:
+    - Top-right ➔ Action for UP button.
+    - Middle-right ➔ Action for SELECT button.
+    - Bottom-right ➔ Action for DOWN button.
+- **Left-Edge Anchoring:**
+  - Avoid placing critical action prompts on the left edge unless they explicitly relate to cancelling/dismissing or exiting the current view.
+- **No Mobile/Touch Patterns:**
+  - Do NOT design bottom navigation bars or full-width bottom toolbars. Pebble has no buttons on the bottom edge.
+  - Do NOT assume touchscreen interaction; users interact purely via the 4 physical buttons.
+  - Do NOT center action labels if they correspond to specific hardware inputs—offset them toward the relevant edge to maintain visual affordance.
+
+### 3. Native Layer Preference
+- Use `ActionBarLayer` or `ActionMenu` for single-screen contextual actions rather than custom floating labels.
+- Use `MenuLayer` or `SimpleMenuLayer` when actions exceed 3 choices (allowing UP/DOWN navigation and SELECT execution).
+- When implementing a custom canvas/graphics layer (`LayerUpdateProc`), draw visual carets or hints using the system provided icons for "up", "down", "checkmark", "pencil", "elipsis", "play", and "stop" along the right margin vertically centered against the respective button positions.
+- When implementing a visual caret for delete or cancel draw it on the left side using the system provided "trash" or "cross". Back is an action that is always assumed to be available and does not need a drawn icon or label on the screen.
 
 ## Rendering: prefer Poco over Piu
 

@@ -11,12 +11,23 @@ export function formatDuration(totalSeconds) {
   const hrs = Math.floor(s / 3600);
   const mins = Math.floor((s % 3600) / 60);
   const secs = s % 60;
-  // Short durations (< 1hr) show minutes and seconds, each labeled with
-  // its own unit letter; long durations (>= 1hr) drop seconds entirely
-  // and show hours and minutes, each labeled - keeps the display compact
-  // on the watch's small screen while staying unambiguous at a glance.
+  // Show only units meaningful at the duration's scale: seconds below a
+  // minute, minutes+seconds below an hour, and hours+minutes from there.
+  // Each shown value keeps its unit letter so no colon interpretation is
+  // needed on the watch's small display.
   if (hrs > 0) return `${hrs}h ${mins}m`;
+  if (mins === 0) return `${secs}s`;
   return `${mins}m ${pad2(secs)}s`;
+}
+
+// A completed segment's duration is always stopTime - startTime, so it's
+// computed on demand rather than stored as its own field - storing it
+// separately would be redundant data that could (in principle) drift out
+// of sync with start/stop, and every persisted segment costs precious
+// bytes against Pebble's small per-key/total storage budgets (see
+// "Persistent storage architecture" in the repo's copilot instructions).
+export function getSegmentDurationMs(seg) {
+  return Math.max(0, seg.stopTime - seg.startTime);
 }
 
 // Reused across every call instead of `new Date(timestamp)` per call: this
@@ -51,9 +62,34 @@ export function getDayKey(timestamp) {
 
 export class WorkTracker {
   constructor(initialState = {}) {
-    // Structure: { "YYYY-MM-DD": [ { id, label, startTime, stopTime, durationMs }, ... ] }
+    // `days` holds the full segment list ONLY for whichever day(s) are
+    // currently loaded into memory - always today, plus at most one past
+    // day while its Segments/Actions view is open (see
+    // loadDaySegments()/unloadDaySegments() below, and main.js's lazy-load
+    // orchestration, which persists each day under its own storage key so
+    // unloaded days cost no memory and don't need to be read/written just
+    // because a *different* day changed). Structure: { "YYYY-MM-DD": [
+    // { id, label, startTime, stopTime }, ... ] } - no durationMs field;
+    // a segment's duration is always computed on demand as
+    // stopTime - startTime (see getSegmentDurationMs()) since storing it
+    // separately would be redundant and cost extra persisted bytes.
     this.days = initialState.days || {};
+    // `dayTotals` is a lightweight index covering EVERY day that has ever
+    // recorded a segment, not just currently-loaded ones: { "YYYY-MM-DD":
+    // { totalMs, count } }. This is what lets PAST_DAYS page through every
+    // day's total/segment-count for display without loading (or even
+    // having ever loaded, this session) that day's full segment list - a
+    // freshly deserialized index-only tracker has zero loaded days but a
+    // complete dayTotals map. Kept in sync with `days` by
+    // _recomputeDayTotals() after every mutation of a loaded day.
+    this.dayTotals = initialState.dayTotals || {};
     this.currentSegment = initialState.currentSegment || null; // { id, label, startTime }
+    // Small incrementing counter used to generate segment ids - cheaper
+    // to persist and compare than a timestamp+random string, since a
+    // segment id is only ever used to find that segment again within its
+    // own day's array (never displayed, never compared across days).
+    // Persisted in the index so ids stay unique across restarts.
+    this.nextSegmentId = initialState.nextSegmentId || 1;
   }
 
   isTiming() {
@@ -70,13 +106,13 @@ export class WorkTracker {
       this.stop(startTime);
     }
     const dayKey = getDayKey(startTime);
-    const index = this.getDaySegments(dayKey).length + 1;
+    const index = this.getDaySegmentCount(dayKey) + 1;
     const resolvedLabel = (label && label.trim().length > 0)
       ? label.trim()
       : getDefaultLabel(index);
 
     this.currentSegment = {
-      id: `${startTime}-${Math.floor(Math.random() * 1e6)}`,
+      id: this.nextSegmentId++,
       label: resolvedLabel,
       startTime
     };
@@ -86,11 +122,9 @@ export class WorkTracker {
   stop(stopTime = Date.now()) {
     if (!this.isTiming()) return null;
 
-    const durationMs = Math.max(0, stopTime - this.currentSegment.startTime);
     const completed = {
       ...this.currentSegment,
-      stopTime,
-      durationMs
+      stopTime
     };
 
     const dayKey = getDayKey(completed.startTime);
@@ -98,14 +132,68 @@ export class WorkTracker {
       this.days[dayKey] = [];
     }
     this.days[dayKey].push(completed);
+    this._recomputeDayTotals(dayKey);
     this.currentSegment = null;
 
     return completed;
   }
 
+  // True if a day's full segment list currently lives in `this.days`
+  // (as opposed to only being known about via the lightweight
+  // `dayTotals` index). Days other than today are only loaded on demand.
+  isDayLoaded(dayKey) {
+    return Object.prototype.hasOwnProperty.call(this.days, dayKey);
+  }
+
+  // Brings a day's full segment list into memory (called by the
+  // persistence layer after reading that day's storage key) - a no-op
+  // in terms of the lightweight index, which already knows this day's
+  // total/count regardless of load state.
+  loadDaySegments(dayKey, segments) {
+    this.days[dayKey] = segments || [];
+  }
+
+  // Frees a day's full segment list from memory without touching its
+  // dayTotals index entry, so its total/count remain available for
+  // PAST_DAYS display; the day can be reloaded later via
+  // loadDaySegments(). Callers are expected to have already persisted
+  // any pending changes before unloading.
+  unloadDaySegments(dayKey) {
+    delete this.days[dayKey];
+  }
+
+  // Removes a day entirely - both its loaded segments (if any) and its
+  // dayTotals index entry - used when a day's last segment is deleted
+  // (nothing left worth remembering) or when storage pressure requires
+  // sacrificing the oldest known day to make room for a write.
+  forgetDay(dayKey) {
+    delete this.days[dayKey];
+    delete this.dayTotals[dayKey];
+  }
+
+  // Recomputes a loaded day's lightweight index entry (total duration +
+  // segment count) from its current in-memory segment list. Called after
+  // any mutation that adds/removes/merges segments within a loaded day,
+  // so `dayTotals` never drifts out of sync with `days`. Label-only edits
+  // (setSegmentLabel/setCurrentSegmentLabel) don't change duration/count
+  // and so don't need this.
+  _recomputeDayTotals(dayKey) {
+    const segs = this.days[dayKey] || [];
+    if (segs.length === 0) {
+      delete this.dayTotals[dayKey];
+      return;
+    }
+    const totalMs = segs.reduce((acc, seg) => acc + getSegmentDurationMs(seg), 0);
+    this.dayTotals[dayKey] = { totalMs, count: segs.length };
+  }
+
   getSortedDayKeys() {
     const today = getDayKey(Date.now());
-    const keys = Object.keys(this.days);
+    // dayTotals (not `days`) is the authoritative list of every day ever
+    // recorded, since a day need not be loaded into memory to be known
+    // about - this is what allows PAST_DAYS to page through the full
+    // history without loading each day's segments just to list it.
+    const keys = Object.keys(this.dayTotals);
     if (!keys.includes(today)) keys.push(today);
     keys.sort(); // Chronological: earliest to latest
     return keys;
@@ -115,8 +203,22 @@ export class WorkTracker {
     return this.days[dayKey] || [];
   }
 
+  // Segment count for a day, from its loaded list if available or
+  // otherwise from the lightweight dayTotals index - callers (e.g.
+  // PAST_DAYS' "N timespans" line) never need to load a day's full
+  // segment list just to display how many segments it has.
+  getDaySegmentCount(dayKey) {
+    if (this.isDayLoaded(dayKey)) return this.days[dayKey].length;
+    return this.dayTotals[dayKey] ? this.dayTotals[dayKey].count : 0;
+  }
+
   getDayTotalMs(dayKey, now = Date.now()) {
-    let total = (this.days[dayKey] || []).reduce((acc, seg) => acc + seg.durationMs, 0);
+    let total;
+    if (this.isDayLoaded(dayKey)) {
+      total = this.days[dayKey].reduce((acc, seg) => acc + getSegmentDurationMs(seg), 0);
+    } else {
+      total = this.dayTotals[dayKey] ? this.dayTotals[dayKey].totalMs : 0;
+    }
     if (this.isTiming() && getDayKey(this.currentSegment.startTime) === dayKey) {
       total += Math.max(0, now - this.currentSegment.startTime);
     }
@@ -126,7 +228,13 @@ export class WorkTracker {
   /**
    * Merges target segment with previous (index - 1) or next (index + 1).
    * Direction: -1 for previous, 1 for next.
-   * Business rule: The other segment's name is retained.
+   * Business rule: The other segment's name is retained. The merged
+   * segment's duration is its outer span (from the earlier start to the
+   * later stop) rather than the sum of the two segments' own worked
+   * durations - if there was a gap between them, that gap is now
+   * absorbed into the merged segment's duration (durationMs is no
+   * longer stored at all; every segment's duration is always
+   * stopTime - startTime, see getSegmentDurationMs()).
    */
   mergeAdjacent(dayKey, targetSegmentId, direction) {
     const segs = this.days[dayKey];
@@ -146,13 +254,13 @@ export class WorkTracker {
       id: neighbor.id,
       label: neighbor.label,
       startTime: Math.min(target.startTime, neighbor.startTime),
-      stopTime: Math.max(target.stopTime, neighbor.stopTime),
-      durationMs: target.durationMs + neighbor.durationMs
+      stopTime: Math.max(target.stopTime, neighbor.stopTime)
     };
 
     // Remove both and insert merged segment in chronological position
     const minIdx = Math.min(targetIdx, neighborIdx);
     segs.splice(minIdx, 2, merged);
+    this._recomputeDayTotals(dayKey);
     return merged;
   }
 
@@ -167,6 +275,7 @@ export class WorkTracker {
     const idx = segs.findIndex((s) => s.id === segmentId);
     if (idx === -1) return false;
     segs.splice(idx, 1);
+    this._recomputeDayTotals(dayKey);
     return true;
   }
 
@@ -201,19 +310,51 @@ export class WorkTracker {
     return true;
   }
 
-  serialize() {
+  // Serializes the lightweight index only: every day's total/count
+  // (dayTotals) plus the in-progress segment, if any - NOT any day's full
+  // segment list (see serializeDaySegments() for that). This is small
+  // enough to always be loaded/saved as a single persistent-storage
+  // entry regardless of how much history exists, since it's the piece
+  // needed on every draw (current timer state, PAST_DAYS totals) without
+  // touching any individual day's data.
+  serializeIndex() {
     return JSON.stringify({
-      days: this.days,
-      currentSegment: this.currentSegment
+      dayTotals: this.dayTotals,
+      currentSegment: this.currentSegment,
+      nextSegmentId: this.nextSegmentId
     });
   }
 
-  static deserialize(raw) {
+  static deserializeIndex(raw) {
     if (!raw) return new WorkTracker();
     try {
       return new WorkTracker(JSON.parse(raw));
     } catch {
       return new WorkTracker();
+    }
+  }
+
+  // Serializes just one day's full segment list, for persistence under
+  // that day's own storage key (e.g. "work_day_2026-01-15") - kept
+  // separate from serializeIndex() so a day's data can be loaded/saved
+  // independently, without reading or holding any other day's segments
+  // in memory. Returns "[]" for an unloaded/unknown day rather than
+  // throwing, since callers may serialize right after forgetting a day.
+  serializeDaySegments(dayKey) {
+    return JSON.stringify(this.days[dayKey] || []);
+  }
+
+  // Parses one day's persisted segment list (the counterpart to
+  // serializeDaySegments()) back into a plain array, degrading to an
+  // empty array on missing/malformed input rather than throwing - a
+  // corrupt single day's storage shouldn't take down the whole app.
+  static parseDaySegments(raw) {
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
     }
   }
 }

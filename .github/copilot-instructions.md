@@ -25,10 +25,10 @@ The normal data flow is: button/dictation input on the watch -> `WorkTracker` st
 ## Repository-specific conventions
 
 - Keep watch-side code compatible with Moddable XS and Pebble's module APIs. Keep reusable timer logic in `timerCore.js` free of Pebble-specific imports so it remains directly testable under Node.
-- Preserve the state shape serialized by `WorkTracker`: `{ days, currentSegment }`, with completed segments grouped under local-date keys and fields such as `id`, `label`, `startTime`, `stopTime`, and `durationMs`.
-- Labels supplied by users are trimmed. Empty or failed dictation falls back to the segment start time rounded to the nearest five minutes via `getDefaultLabel`.
-- Segment merges are adjacent-only. The non-target neighbor's label and ID are retained, while the merged duration is the sum of both segments and the time range spans both.
-- Keep Timeline synchronization actions and payloads aligned between `main.js` and `src/pkjs/index.js`: `INSERT_TIMELINE_PIN` and `DELETE_TIMELINE_PIN`, with segment `id`, `label`, `startTime`, and `durationMs`.
+- Preserve the split persistence model serialized by `WorkTracker`: the index is `{ dayTotals, currentSegment, nextSegmentId }`, while each loaded/stored day is a separate segment array. Completed segment records are `{ id, label, startTime, stopTime }`; do not add `durationMs` back to persisted segment objects.
+- Labels supplied by users are trimmed. A new unlabeled segment uses `Timespan N`, where `N` is its sequence within that day; failed or empty dictation leaves the existing label unchanged.
+- Segment merges are adjacent-only. The non-target neighbor's label and ID are retained, and the merged time range is the outer span from the earliest start to latest stop (including any gap between the original segments).
+- Keep Timeline synchronization actions and payloads aligned between `main.js` and `src/pkjs/index.js`: `INSERT_TIMELINE_PIN` and `DELETE_TIMELINE_PIN`, with segment `id`, `label`, `startTime`, and a computed `durationMs`. Timeline transport may include `durationMs`; persisted segment objects do not.
 - Both screen shapes are supported in the same watch UI. Use the existing `device.screen.shape === "round"` check and safe padding differences when changing layouts.
 - The UI uses the four hardware button names (`up`, `down`, `select`, `back`) and explicit view state values (`TODAY`, `TODAY_SEGMENTS`, `PAST_DAYS`, `SEGMENT_ACTIONS`) for navigation.
 - Keep watch-side icon assets in the Pebble resource pipeline: declare them in `package.json` under `pebble.resources.media`, give them stable semantic names that match their button/action role, and reference those same semantics consistently from `src/embeddedjs/main.js`.
@@ -130,7 +130,9 @@ rule for every duration shown in the app (current elapsed time, segment
 durations, daily totals): space-separated, each shown unit suffixed with its
 own unit letter, no colons, and the leading unit is never zero-padded (only the
 trailing/smallest shown unit is zero-padded):
-- **Durations under 1 hour**: minutes and seconds only, e.g. `12m 35s`.
+- **Durations under 1 minute**: seconds only, e.g. `35s`.
+- **Durations from 1 minute through 59:59**: minutes and seconds, e.g.
+  `12m 35s`.
 - **Durations 1 hour or more**: hours and minutes only (seconds are dropped
   entirely), e.g. `3h 6m`.
 
@@ -183,6 +185,12 @@ emery/gabbro share a **hard 128KB limit for code + heap combined**. This app run
 close to that ceiling, so memory pressure — not logic bugs — is the most likely
 cause of mysterious crashes.
 
+- **There are three distinct ceilings to diagnose separately:** the overall
+  128KB app/code/RAM budget, XS's independently sized slot and chunk heaps,
+  and persistent `localStorage` (about 2045 bytes/key and 7.5-8KB total).
+  Free space in one does not help exhaustion in another. In particular,
+  persistent-history capacity cannot be inferred from `Heap Usage`, and a
+  large aggregate heap number can hide an exhausted chunk sub-heap.
 - **Symptom of running out of memory**: the app dies with an Alloy fatal error like
   `fxAbort memory full` / `Chunk allocation: failed for N bytes`, often with no
   useful stack trace, and sometimes only on the *first* invocation of a code path
@@ -262,13 +270,8 @@ cause of mysterious crashes.
     total — one sub-heap can be nearly full while the aggregate still looks
     roomy.
 - **Pebble's persistent key-value storage has its own separate quota**,
-  distinct from the JS heap. Serializing a very large number of segments
-  into one storage key can hit `Error: key-value error (in write)` even when
-  the heap fix above is in place. This was only observed at ~120 segments
-  written in a single rapid-fire stress test (far beyond a realistic day's
-  10-30 segments), so it's not something normal usage should hit, but if
-  very-long-history features are ever added, consider pruning/rotating
-  old data rather than growing one unbounded key.
+  distinct from the JS heap — see "Persistent storage architecture" below for
+  the confirmed limits and the per-day-key design that works within them.
 - **Reuse a single `Date` instance instead of `new Date(timestamp)` in
   hot/repeated paths.** `timerCore.js`'s `getDayKey()`/`formatTimeOfDay()` now
   share one `sharedDate` via a `dateAt(timestamp)` helper (`sharedDate.setTime(...)`)
@@ -289,16 +292,17 @@ cause of mysterious crashes.
   install — a leaked log process can make subsequent installs fail or hang for
   reasons unrelated to the app code itself.
 - If the emulator gets into a bad state (installs failing unexpectedly, stale
-  app on screen, timeouts), use `pebble kill && pebble wipe` to fully reset
-  emulator state before reinstalling, rather than continuing to debug against a
-  wedged emulator.
+  app on screen, timeouts), stop the exact `qemu-pebble` and `pypkjs` PIDs,
+  then restart and reinstall rather than continuing against a wedged emulator.
 - Use `pebble emu-button click <up|down|select|back> --emulator <target>` to
   simulate button presses (not `emu-tap`, which is for accelerometer taps only).
 - `pebble wipe` alone does not reliably clear this app's persisted
-  localStorage in this environment. If stale segments/days appear
-  unexpectedly during testing, check for leftover `qemu-pebble`/`pypkjs`
-  processes (`ps aux | grep -E "qemu-pebble|pypkjs"`), kill them, then run
-  `pebble wipe --everything` and reinstall to get a genuinely clean state.
+  localStorage in this environment. Stop `qemu-pebble` and `pypkjs` first,
+  then remove only this app's resolved `.dat`/`.dir` files from the target's
+  `localstorage/` directory and its UUID-named PBW from `app_cache/` before
+  reinstalling. **Do not use `pebble wipe --everything` here:** pebble-tool
+  5.0.40 was observed deleting the local SDK cache and then failing with
+  `Directory not empty`, requiring SDK 4.33.1 to be reinstalled.
 - **A long-lived QEMU process can itself become the cause of "OOM" crashes,
   independent of app code size.** In one session, `Alloy: Fatal Error /
   memory full` crashes became increasingly frequent (eventually on nearly
@@ -350,6 +354,150 @@ cause of mysterious crashes.
   Segment Actions press-to-delete threshold). Screenshot after every
   button press when testing this flow, and only send the next press once the
   current screen is confirmed.
+
+## Persistent storage architecture
+
+Pebble's key-value `localStorage` has two separate, empirically-confirmed
+limits (measured via binary-search stress tests against this emulator/SDK,
+not documentation guesswork): a **hard ~2045-byte limit per individual key**
+(2046+ bytes throws `Error: key-value error (in write)`), and a **separate
+~7.5–8KB total budget across all keys combined**. The original design stored
+every day's segments in one JSON blob under a single key
+(`work_tracker_state_v2`) and hit the per-key limit after only ~3-4 days of
+realistic use (~15-24 segments) — this is what that stale "~120 segments"
+figure from an earlier, less rigorous test really should have been: ~2045
+bytes/key is the real ceiling for a single-blob design.
+
+The fix, now implemented, splits storage into many small per-day keys plus one
+small always-loaded index, so usable history scales up toward the larger
+~7.5–8KB total budget instead of being capped by the much smaller per-key
+limit. A clean-emulator stress test using the production save/prune paths and
+150 chronological days with a repeating 1-10 segments/day distribution
+(5.5/day average) stabilized at **13-14 retained days**; the final persisted
+state held 13 complete days / 67 segments (6,201 JSON payload bytes plus
+storage-key overhead) and reloaded with the same counts. Treat roughly two
+weeks as the practical history capacity for typical use, with the exact count
+varying according to segments per day and label lengths.
+
+### How history consumes RAM and persistent storage
+
+Keep these two budgets conceptually separate when diagnosing or designing
+features:
+
+- **XS heap/RAM holds only active working data.** `WorkTracker.days` contains
+  today's full segment array plus at most one past day's array while that day
+  is open. Navigating back unloads the past array. Therefore, adding retained
+  history does not load every historical segment into the 128KB app heap.
+- **The lightweight index grows with every retained day.** `dayTotals` remains
+  fully resident because the past-days screen needs each date's
+  `{ totalMs, count }` without loading its segments. `currentSegment` and
+  `nextSegmentId` are also index-resident. In the measured 13-day state,
+  `serializeIndex()` was 626 bytes (about 48 serialized bytes per day at that
+  scale). The index is still subject to the ~2045-byte single-key limit, even
+  though the total-storage quota was reached first in the current workload.
+- **Persistent storage holds every retained day's full array.** The measured
+  13-day/67-segment state used 6,201 bytes of JSON: 626 bytes for the index
+  and about 5,575 bytes for day payloads, averaging roughly 429 bytes/day and
+  83 bytes/segment. Actual quota consumption is higher because storage-key
+  names and key/value allocator metadata also cost space; do not estimate
+  capacity from JSON length alone.
+- **Labels are the main variable-size segment field.** Default `Timespan N`
+  labels produced the measurements above. Longer dictated labels reduce the
+  number of segments/days that fit. Numeric timestamps and the small integer
+  `id` have comparatively predictable cost.
+- **The practical retention unit is a whole day.** When quota pressure occurs,
+  pruning removes the oldest day's payload and its index entry together. The
+  retained day count may oscillate (13-14 in the measured workload) as a
+  small incoming day fits where a larger incoming day requires another prune.
+- **Capacity tests must verify persistence, not just in-memory state.** Generate
+  days in chronological order (oldest to newest), exercise the production
+  `safeSetItem()`/pruning path, then relaunch and compare day and segment
+  counts. A pre-restart count can hide stale-index or failed-write bugs.
+
+- **`work_index_v1`** — always loaded and saved as a whole. Holds
+  `WorkTracker.serializeIndex()`: the lightweight `dayTotals` map (every day
+  that has ever had a segment, as `{ totalMs, count }`) plus the in-progress
+  `currentSegment`, if any. This is all `PAST_DAYS` needs to page through and
+  display every day's total/count — it never needs to load a day's full
+  segment list just to list it.
+- **`work_day_<YYYY-MM-DD>`** — one key per day, holding that day's full
+  segment array via `serializeDaySegments(dayKey)`/`parseDaySegments()`. Only
+  read/written when that specific day's segments actually change or need
+  displaying in detail.
+- **Today is always loaded** (via `loadDay()` at startup) and never evicted —
+  it is not special-cased out of the index/persistence system, it just skips
+  the lazy load-on-navigate cycle that past days go through, since it's
+  known to be needed on every draw.
+- **At most one past day is loaded at a time** — whichever day the user has
+  navigated into via `PAST_DAY_SEGMENTS`/`SEGMENT_ACTIONS`. `main.js`'s
+  `ensurePastDayLoaded(dayKey)`/`releasePastDayIfLoaded()` are called at
+  exactly the two points a past day's load state changes: entering
+  `PAST_DAY_SEGMENTS` from `PAST_DAYS` (load), and leaving
+  `PAST_DAY_SEGMENTS` back to `PAST_DAYS` via Back or an empty-day bounce
+  (release). `SEGMENT_ACTIONS`/`SEGMENT_DELETE_CONFIRM` entered from
+  `PAST_DAY_SEGMENTS` stay within the same loaded-day context and need no
+  load/release of their own.
+- **Save calls are precise, not a single blanket `save()`.** Each call site
+  in `main.js` calls `saveIndex()` and/or `saveDay(dayKey)` depending on what
+  actually changed: starting a timer only touches the index
+  (`currentSegment`); stopping one touches both today's day key and the
+  index (a completed segment moved from `currentSegment` into `days`, and
+  `dayTotals` changed); a label-only edit (dictation) touches only whichever
+  storage actually holds that label (index for the in-progress segment, the
+  day key for a completed one) since labels don't affect `dayTotals`; merge/
+  delete touch both the day key and the index (duration/count changed), and
+  if a delete brings a day's segment count to 0, its storage key is removed
+  entirely (`localStorage.removeItem`) rather than persisted as `"[]"`.
+- **`safeSetItem()` is a quota-exceeded safety net**, wrapping every write:
+  if a write still fails after the per-day-key design (e.g. total history
+  approaches the ~7.5–8KB ceiling), it sacrifices the oldest known day via
+  `tracker.forgetDay()` + `localStorage.removeItem()` and retries, rather
+  than crashing. `pruneOldestDay()` never sacrifices the day currently being
+  written or an explicitly protected key (e.g. today). When retrying an index
+  write, `safeSetItem()` must reserialize `tracker.serializeIndex()` after
+  every prune; retrying the original pre-prune string resurrects removed days
+  as phantom index entries after restart.
+- When extending this system (e.g. changing what a day's storage payload
+  contains), keep `WorkTracker`'s `dayTotals` index and `days` (loaded
+  segments) in sync via `_recomputeDayTotals(dayKey)` after any mutation
+  that changes a day's segment count/duration — label-only edits don't need
+  it. `getDaySegmentCount()`/`getDayTotalMs()` transparently fall back to
+  the index when a day isn't loaded, so new UI code should prefer those over
+  `getDaySegments(key).length` when only a summary is needed, to avoid
+  forcing an unnecessary day load.
+- This app has never shipped beyond the local emulator, so there is no
+  legacy single-blob data to migrate in practice — don't reintroduce a
+  `migrateLegacyStorage()`-style step unless real deployed data is a concern
+  again.
+
+### Segment object fields: keep them minimal, derive what you can
+
+Stored segment objects (`{ id, label, startTime, stopTime }`) intentionally
+omit any field whose value is always derivable from the others, since every
+byte saved per segment directly extends how much history fits under the
+per-key/total storage limits above:
+
+- **No `durationMs` field.** It was always exactly `stopTime - startTime` for
+  segments created via `start()`/`stop()`, so it was pure redundant storage.
+  Use the exported `getSegmentDurationMs(seg)` helper (in `timerCore.js`)
+  everywhere a segment's duration is needed, instead of adding a stored
+  field back.
+- **`mergeAdjacent()`'s merged-segment duration is the outer span** (earliest
+  start to latest stop of the two segments being merged), which now
+  **includes any gap between them** — this is a deliberate simplification
+  from an earlier design that summed the two segments' own worked
+  durations and excluded the gap. If you ever need "exact worked time only"
+  semantics again, that requires reintroducing a stored duration field (or
+  an explicit gap-tracking field) and is a real behavior change, not a
+  no-op refactor.
+- **`id` is a small incrementing integer** (`WorkTracker.nextSegmentId`,
+  persisted in the index via `serializeIndex()`/`deserializeIndex()` so it
+  stays unique across restarts), not a timestamp+random string. It exists
+  purely for `find`/`findIndex` lookups within a single day's segment array
+  (locate a segment to merge/delete/relabel) — it is never displayed to the
+  user and never compared across different days, so its format is an
+  implementation detail. Don't assume it's sortable/meaningful across days,
+  and don't reintroduce a longer/composite id without a concrete need.
 
 ## Stale-press guard: a general pattern, not just app launch
 

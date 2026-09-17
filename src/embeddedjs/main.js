@@ -1,11 +1,90 @@
 import Poco from "commodetto/Poco";
 import Button from "pebble/button";
 import Dictation from "pebble/dictation";
-import { WorkTracker, formatDuration, formatTimeOfDay, getDayKey, getDefaultLabel } from "timerCore";
+import { WorkTracker, formatDuration, formatTimeOfDay, getDayKey, getDefaultLabel, getSegmentDurationMs } from "timerCore";
 
-const STORAGE_KEY = "work_tracker_state_v2";
-const tracker = WorkTracker.deserialize(localStorage.getItem(STORAGE_KEY));
-function save() { localStorage.setItem(STORAGE_KEY, tracker.serialize()); }
+// Persistent storage is split into many small per-day keys (rather than
+// one single blob) because Pebble's key-value storage has a hard ~2045
+// byte limit PER KEY, on top of a separate ~7.5-8KB TOTAL budget across
+// all keys (both empirically measured against this emulator/SDK) - a
+// single blob holding every day's segments hit the per-key limit after
+// only ~3-4 days of realistic use. Splitting by day raises the usable
+// history up toward the total budget instead of the much smaller
+// per-key one, and lets days be loaded/saved independently so paging
+// through history doesn't require every day's segments in memory at
+// once. See dayTotals/isDayLoaded etc. in timerCore.js.
+const INDEX_STORAGE_KEY = "work_index_v1";
+function dayStorageKey(dayKey) { return "work_day_" + dayKey; }
+
+const tracker = WorkTracker.deserializeIndex(localStorage.getItem(INDEX_STORAGE_KEY));
+
+// Attempts to write a value, and if the write fails (quota exceeded),
+// sacrifices the oldest known day (never `protectedDayKey`, e.g.
+// today, and never the key currently being written) and retries - a
+// safety net so a user who accumulates more history than the ~7.5-8KB
+// total budget allows gets old data quietly pruned instead of a fatal
+// crash. Bounded by the number of known days so it can't loop forever.
+function pruneOldestDay(protectedDayKey) {
+  const keys = tracker.getSortedDayKeys().filter((k) => k !== protectedDayKey);
+  if (keys.length === 0) return false;
+  const oldest = keys[0];
+  tracker.forgetDay(oldest);
+  localStorage.removeItem(dayStorageKey(oldest));
+  return true;
+}
+function safeSetItem(key, value, protectedDayKey) {
+  for (let attempt = 0; attempt < 60; attempt++) {
+    try {
+      localStorage.setItem(key, value);
+      return true;
+    } catch {
+      if (!pruneOldestDay(protectedDayKey)) return false;
+      // Pruning mutates tracker.dayTotals. An index retry must serialize
+      // that updated state rather than repeatedly writing the original
+      // pre-prune value, which would resurrect removed days after restart.
+      if (key === INDEX_STORAGE_KEY) value = tracker.serializeIndex();
+    }
+  }
+  return false;
+}
+
+function saveIndex() {
+  safeSetItem(INDEX_STORAGE_KEY, tracker.serializeIndex(), null);
+}
+function saveDay(dayKey) {
+  safeSetItem(dayStorageKey(dayKey), tracker.serializeDaySegments(dayKey), dayKey);
+}
+function loadDay(dayKey) {
+  if (tracker.isDayLoaded(dayKey)) return;
+  const raw = localStorage.getItem(dayStorageKey(dayKey));
+  tracker.loadDaySegments(dayKey, WorkTracker.parseDaySegments(raw));
+}
+
+// Today is always kept loaded (never evicted) and loaded eagerly here at
+// startup, rather than lazily like past days - it's not special-cased
+// out of the index/persistence system, it just never goes through the
+// load-on-navigate/unload-on-back cycle that past days do.
+loadDay(getDayKey(Date.now()));
+
+// At most one PAST day is kept loaded at a time - whichever the user has
+// currently navigated into via PAST_DAY_SEGMENTS/SEGMENT_ACTIONS. Loaded
+// when entering PAST_DAY_SEGMENTS from PAST_DAYS, released when leaving
+// PAST_DAY_SEGMENTS back to PAST_DAYS (the only two points a past day's
+// load state changes - SEGMENT_ACTIONS/SEGMENT_DELETE_CONFIRM entered
+// from PAST_DAY_SEGMENTS stay within the same loaded-day context).
+let loadedPastDayKey = null;
+function ensurePastDayLoaded(dayKey) {
+  if (loadedPastDayKey === dayKey) return;
+  releasePastDayIfLoaded();
+  loadDay(dayKey);
+  loadedPastDayKey = dayKey;
+}
+function releasePastDayIfLoaded() {
+  if (loadedPastDayKey === null) return;
+  tracker.unloadDaySegments(loadedPastDayKey);
+  loadedPastDayKey = null;
+}
+
 
 const render = new Poco(screen);
 const pad = screen.round ? 28 : 10;
@@ -266,7 +345,7 @@ function draw(offsetY = 0) {
     if (!lines) { switchView("TODAY"); return; }
   } else if (currentView === "PAST_DAY_SEGMENTS") {
     lines = getPastDaySegmentsLines();
-    if (!lines) { switchView("PAST_DAYS"); return; }
+    if (!lines) { releasePastDayIfLoaded(); switchView("PAST_DAYS"); return; }
   } else if (currentView === "SEGMENT_ACTIONS") {
     // The menu is only ever entered right after a valid segment is
     // selected, and is only left via merge/delete/back (which change
@@ -274,14 +353,14 @@ function draw(offsetY = 0) {
     // present here; no null-fallback needed (inlined for the same
     // reason as the Select-handler's Segment Actions entry above).
     const seg = tracker.getDaySegments(segActionsDayKey).find((s) => s.id === segActionsSegmentId);
-    lines = getSummaryLines(seg.label, seg.durationMs);
+    lines = getSummaryLines(seg.label, getSegmentDurationMs(seg));
   } else if (currentView === "SEGMENT_DELETE_CONFIRM") {
     // Same not-null-checked reasoning as the SEGMENT_ACTIONS branch above -
     // this view is only reached right after a valid segment is selected
     // there, and only left via confirm/cancel (which change currentView
     // immediately).
     const seg = tracker.getDaySegments(segActionsDayKey).find((s) => s.id === segActionsSegmentId);
-    lines = getSummaryLines(seg.label, seg.durationMs);
+    lines = getSummaryLines(seg.label, getSegmentDurationMs(seg));
   } else {
     lines = getTodayLines();
   }
@@ -335,7 +414,7 @@ function getSegmentDetailLines(segs, idx) {
   const seg = segs[idx];
   return [
     { text: `${idx + 1} of ${segs.length}`, font: fontSmall, color: blue },
-    { text: formatDuration(seg.durationMs / 1000), font: fontBig, color: white },
+    { text: formatDuration(getSegmentDurationMs(seg) / 1000), font: fontBig, color: white },
     { text: seg.label, font: fontSmall, color: white },
     { text: `${formatTimeOfDay(seg.startTime)} - ${formatTimeOfDay(seg.stopTime)}`, font: fontSmall, color: orange, gap: NAV_GAP }
   ];
@@ -358,9 +437,13 @@ function getTodaySegmentsLines() {
 function getPastDayLines() {
   if (pastDayKeys.length === 0) return null;
   const key = pastDayKeys[pastDayIdx];
-  const segs = tracker.getDaySegments(key);
+  // Uses the lightweight dayTotals index (via getDaySegmentCount/
+  // getDayTotalMs) rather than getDaySegments() - paging through
+  // PAST_DAYS must not force-load every day's full segment list just to
+  // show its count/total.
+  const count = tracker.getDaySegmentCount(key);
   const totalMs = tracker.getDayTotalMs(key);
-  const status = `${segs.length} timespan${segs.length === 1 ? "" : "s"}`;
+  const status = `${count} timespan${count === 1 ? "" : "s"}`;
   return getSummaryLines(key, totalMs, status);
 }
 
@@ -493,7 +576,16 @@ function handleSegmentAction(direction) {
     if (segActionsSourceView === "TODAY_SEGMENTS") todaySegIdx = idx >= 0 ? idx : 0;
     else pastDaySegIdx = idx >= 0 ? idx : 0;
   }
-  save();
+  // A delete/merge changes a day's segment content and its total/count,
+  // so both the day's own storage key and the shared index need saving.
+  // If the day's last segment was just deleted, its storage key is no
+  // longer worth keeping around - remove it instead of writing "[]".
+  if (tracker.getDaySegmentCount(segActionsDayKey) === 0) {
+    localStorage.removeItem(dayStorageKey(segActionsDayKey));
+  } else {
+    saveDay(segActionsDayKey);
+  }
+  saveIndex();
   currentView = segActionsSourceView;
   draw();
 }
@@ -524,9 +616,17 @@ function ensureSegmentDictation() {
     onReadable() {
       pressedSinceLaunch.select = false;
       const text = this.read();
-      if (dictationTargetsCurrent) tracker.setCurrentSegmentLabel(text);
-      else tracker.setSegmentLabel(dictationDayKey, dictationSegmentId, text);
-      save();
+      // A label-only edit never changes a day's total/count, so only
+      // the storage that actually holds the label needs saving: the
+      // index for the in-progress segment's label, or that day's own
+      // segment-list key for a completed segment's label.
+      if (dictationTargetsCurrent) {
+        tracker.setCurrentSegmentLabel(text);
+        saveIndex();
+      } else {
+        tracker.setSegmentLabel(dictationDayKey, dictationSegmentId, text);
+        saveDay(dictationDayKey);
+      }
       draw();
     },
     onError() {
@@ -564,14 +664,20 @@ function stopTimerTick() {
 
 function handleStartStopTimer() {
   if (tracker.isTiming()) {
+    const todayKey = getDayKey(Date.now());
     tracker.stop();
     stopTimerTick();
-    save();
+    // Stopping moves the segment out of currentSegment (index) and into
+    // today's day array (and updates today's total/count in the index),
+    // so both today's storage key and the index need saving.
+    saveDay(todayKey);
+    saveIndex();
     draw();
   } else {
     tracker.start();
     startTimerTick();
-    save();
+    // Starting only changes currentSegment, which lives in the index.
+    saveIndex();
     draw();
   }
 }
@@ -675,7 +781,10 @@ function handleSelectShortPress() {
   } else if (currentView === "TODAY") {
     handleStartStopTimer();
   } else if (currentView === "PAST_DAYS") {
-    switchView("PAST_DAY_SEGMENTS", () => { pastDaySegIdx = 0; });
+    switchView("PAST_DAY_SEGMENTS", () => {
+      pastDaySegIdx = 0;
+      ensurePastDayLoaded(pastDayKeys[pastDayIdx]);
+    });
   } else if (currentView === "TODAY_SEGMENTS" || currentView === "PAST_DAY_SEGMENTS") {
     // Enter the Segment Actions menu for the currently shown segment,
     // pinning down which day/segment its actions apply to (inlined
@@ -747,7 +856,7 @@ new Button({
     } else if (type === "back") {
       if (currentView === "TODAY_SEGMENTS") slideTransition("TODAY", null, 1);
       else if (currentView === "PAST_DAYS") slideTransition("TODAY", null, -1);
-      else if (currentView === "PAST_DAY_SEGMENTS") switchView("PAST_DAYS");
+      else if (currentView === "PAST_DAY_SEGMENTS") { releasePastDayIfLoaded(); switchView("PAST_DAYS"); }
       else if (currentView === "SEGMENT_ACTIONS") { currentView = segActionsSourceView; draw(); }
       else if (currentView === "SEGMENT_DELETE_CONFIRM") { currentView = "SEGMENT_ACTIONS"; draw(); }
       else watch.exit();

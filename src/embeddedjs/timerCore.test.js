@@ -5,7 +5,8 @@ import {
   formatDuration,
   formatTimeOfDay,
   getDayKey,
-  getDefaultLabel
+  getDefaultLabel,
+  getSegmentDurationMs
 } from "./timerCore.js";
 
 describe("Timer Core - Multi-Day & Segment Operations", () => {
@@ -47,6 +48,16 @@ describe("Timer Core - Multi-Day & Segment Operations", () => {
     assert.equal(getDefaultLabel(3), "Timespan 3");
   });
 
+  it("formats durations with only units meaningful at their scale", () => {
+    assert.equal(formatDuration(0), "0s");
+    assert.equal(formatDuration(7), "7s");
+    assert.equal(formatDuration(59), "59s");
+    assert.equal(formatDuration(60), "1m 00s");
+    assert.equal(formatDuration(755), "12m 35s");
+    assert.equal(formatDuration(3600), "1h 0m");
+    assert.equal(formatDuration(11195), "3h 6m");
+  });
+
   it("assigns sequential Timespan N default labels within a day when no label is given", () => {
     const tracker = new WorkTracker();
     const day = new Date(2026, 8, 5, 9, 0, 0).getTime();
@@ -80,7 +91,10 @@ describe("Timer Core - Multi-Day & Segment Operations", () => {
 
     assert.ok(merged);
     assert.equal(merged.label, "First Task"); // Other segment's name is kept
-    assert.equal(merged.durationMs, 30000);   // 10s + 20s
+    // Merged duration is the outer span (earliest start to latest stop),
+    // including the 5s gap between the two original segments - it's no
+    // longer the sum of their individual worked durations.
+    assert.equal(getSegmentDurationMs(merged), 35000);
     assert.equal(merged.startTime, t0);
     assert.equal(merged.stopTime, t0 + 35000);
 
@@ -105,7 +119,8 @@ describe("Timer Core - Multi-Day & Segment Operations", () => {
 
     assert.ok(merged);
     assert.equal(merged.label, "Main Work"); // Other segment's name is kept
-    assert.equal(merged.durationMs, 20000);
+    // Outer span (t0 to t0+22000) includes the 2s gap between segments.
+    assert.equal(getSegmentDurationMs(merged), 22000);
     assert.equal(merged.id, seg2.id);
 
     const remaining = tracker.getDaySegments(dayKey);
@@ -207,6 +222,107 @@ describe("Timer Core - Multi-Day & Segment Operations", () => {
     assert.equal(tracker.currentSegment.label, "Old Label");
   });
 
+  it("reports a day's total duration and segment count via the lightweight index even after its segments are unloaded from memory", () => {
+    const tracker = new WorkTracker();
+    const t0 = new Date(2026, 8, 3, 9, 0, 0).getTime();
+    const dayKey = "2026-09-03";
+
+    tracker.start("Task A", t0);
+    tracker.stop(t0 + 600000); // 10 min
+    tracker.start("Task B", t0 + 700000);
+    tracker.stop(t0 + 1300000); // 10 min
+
+    assert.equal(tracker.isDayLoaded(dayKey), true);
+    assert.equal(tracker.getDaySegmentCount(dayKey), 2);
+    assert.equal(tracker.getDayTotalMs(dayKey), 1200000);
+
+    tracker.unloadDaySegments(dayKey);
+    assert.equal(tracker.isDayLoaded(dayKey), false);
+    // Total/count remain available from the lightweight index without
+    // the day's full segment list being loaded in memory...
+    assert.equal(tracker.getDaySegmentCount(dayKey), 2);
+    assert.equal(tracker.getDayTotalMs(dayKey), 1200000);
+    // ...while asking for the actual segments of an unloaded day yields
+    // an empty list (not an error), matching a not-yet-loaded day.
+    assert.deepEqual(tracker.getDaySegments(dayKey), []);
+
+    tracker.loadDaySegments(dayKey, [
+      { id: "x", label: "Reloaded", startTime: t0, stopTime: t0 + 1200000 }
+    ]);
+    assert.equal(tracker.isDayLoaded(dayKey), true);
+    assert.equal(tracker.getDaySegments(dayKey).length, 1);
+  });
+
+  it("forgetDay() removes both a day's loaded segments and its lightweight index entry", () => {
+    const tracker = new WorkTracker();
+    const t0 = new Date(2026, 8, 3, 9, 0, 0).getTime();
+    const dayKey = "2026-09-03";
+
+    tracker.start("Task", t0);
+    tracker.stop(t0 + 60000);
+    assert.equal(tracker.getSortedDayKeys().includes(dayKey), true);
+
+    tracker.forgetDay(dayKey);
+    assert.equal(tracker.isDayLoaded(dayKey), false);
+    assert.equal(tracker.getDaySegmentCount(dayKey), 0);
+    assert.equal(tracker.getDayTotalMs(dayKey), 0);
+    assert.equal(tracker.getSortedDayKeys().includes(dayKey), false);
+  });
+
+  it("drops a day from the lightweight index once its last segment is deleted", () => {
+    const tracker = new WorkTracker();
+    const t0 = new Date(2026, 8, 3, 9, 0, 0).getTime();
+    const dayKey = "2026-09-03";
+
+    tracker.start("Solo Task", t0);
+    const seg = tracker.stop(t0 + 60000);
+    assert.equal(tracker.getDaySegmentCount(dayKey), 1);
+
+    tracker.deleteSegment(dayKey, seg.id);
+    assert.equal(tracker.getDaySegmentCount(dayKey), 0);
+    assert.equal(tracker.getSortedDayKeys().includes(dayKey), false);
+  });
+
+  it("round-trips the lightweight index (day totals + in-progress segment) via serializeIndex/deserializeIndex", () => {
+    const tracker = new WorkTracker();
+    const t0 = new Date(2026, 8, 3, 9, 0, 0).getTime();
+    const dayKey = "2026-09-03";
+
+    tracker.start("Finished Task", t0);
+    tracker.stop(t0 + 60000);
+    tracker.start("Active Task", t0 + 120000);
+
+    const restored = WorkTracker.deserializeIndex(tracker.serializeIndex());
+
+    assert.equal(restored.getDaySegmentCount(dayKey), 1);
+    assert.equal(restored.getDayTotalMs(dayKey, t0 + 60000), 60000);
+    assert.equal(restored.isTiming(), true);
+    assert.equal(restored.currentSegment.label, "Active Task");
+    // The index carries totals/counts only - a freshly deserialized
+    // index-only tracker has no day's full segment list loaded yet.
+    assert.equal(restored.isDayLoaded(dayKey), false);
+  });
+
+  it("round-trips one day's segment list via serializeDaySegments/parseDaySegments, independent of any other day", () => {
+    const tracker = new WorkTracker();
+    const t0 = new Date(2026, 8, 3, 9, 0, 0).getTime();
+    const dayKey = "2026-09-03";
+
+    tracker.start("Task A", t0);
+    tracker.stop(t0 + 60000);
+
+    const raw = tracker.serializeDaySegments(dayKey);
+    const segs = WorkTracker.parseDaySegments(raw);
+    assert.equal(segs.length, 1);
+    assert.equal(segs[0].label, "Task A");
+
+    // Malformed/missing input degrades gracefully to an empty list
+    // rather than throwing - a corrupt single day's storage shouldn't
+    // take down the whole app.
+    assert.deepEqual(WorkTracker.parseDaySegments(null), []);
+    assert.deepEqual(WorkTracker.parseDaySegments("not json"), []);
+  });
+
   it("keeps a segment that runs past midnight under the day it started, not the day it ended", () => {
     const tracker = new WorkTracker();
     const startTime = new Date(2026, 8, 3, 23, 45, 0).getTime(); // 11:45 PM Sep 3
@@ -216,7 +332,7 @@ describe("Timer Core - Multi-Day & Segment Operations", () => {
     const seg = tracker.stop(stopTime);
 
     // Full 30-minute duration is preserved, not truncated at midnight.
-    assert.equal(seg.durationMs, 30 * 60000);
+    assert.equal(getSegmentDurationMs(seg), 30 * 60000);
 
     // Segment is filed under the start day...
     assert.equal(tracker.getDaySegments("2026-09-03").length, 1);
@@ -243,7 +359,7 @@ describe("Timer Core - Multi-Day & Segment Operations", () => {
     assert.equal(tracker.getDayTotalMs("2026-09-04", nowAfterMidnight), 0);
 
     const seg = tracker.stop(nowAfterMidnight);
-    assert.equal(seg.durationMs, 2 * 3600000);
+    assert.equal(getSegmentDurationMs(seg), 2 * 3600000);
     assert.equal(tracker.getDaySegments("2026-09-03").length, 1);
     assert.equal(tracker.getDaySegments("2026-09-04").length, 0);
   });
@@ -281,7 +397,7 @@ describe("Timer Core - Daylight Saving Time transitions", () => {
     tracker.start("Spring Forward Task", startTime);
     const seg = tracker.stop(stopTime);
 
-    assert.equal(seg.durationMs, 1 * 3600000);
+    assert.equal(getSegmentDurationMs(seg), 1 * 3600000);
     assert.equal(tracker.getDayTotalMs(getDayKey(startTime)), 1 * 3600000);
   });
 
@@ -295,7 +411,7 @@ describe("Timer Core - Daylight Saving Time transitions", () => {
     tracker.start("Fall Back Task", startTime);
     const seg = tracker.stop(stopTime);
 
-    assert.equal(seg.durationMs, 3 * 3600000);
+    assert.equal(getSegmentDurationMs(seg), 3 * 3600000);
     assert.equal(tracker.getDayTotalMs(getDayKey(startTime)), 3 * 3600000);
   });
 

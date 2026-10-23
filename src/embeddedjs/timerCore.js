@@ -183,7 +183,10 @@ export class WorkTracker {
       delete this.dayTotals[dayKey];
       return;
     }
-    const totalMs = segs.reduce((acc, seg) => acc + getSegmentDurationMs(seg), 0);
+    let totalMs = 0;
+    for (let i = 0; i < segs.length; i++) {
+      totalMs += getSegmentDurationMs(segs[i]);
+    }
     this.dayTotals[dayKey] = { totalMs, count: segs.length };
   }
 
@@ -215,7 +218,11 @@ export class WorkTracker {
   getDayTotalMs(dayKey, now = Date.now()) {
     let total;
     if (this.isDayLoaded(dayKey)) {
-      total = this.days[dayKey].reduce((acc, seg) => acc + getSegmentDurationMs(seg), 0);
+      const segs = this.days[dayKey];
+      total = 0;
+      for (let i = 0; i < segs.length; i++) {
+        total += getSegmentDurationMs(segs[i]);
+      }
     } else {
       total = this.dayTotals[dayKey] ? this.dayTotals[dayKey].totalMs : 0;
     }

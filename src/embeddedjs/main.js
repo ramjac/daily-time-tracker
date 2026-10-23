@@ -297,7 +297,12 @@ const pressedSinceLaunch = { select: false, up: false, down: false, back: false 
 
 function refreshPastDayKeys() {
   const todayKey = getDayKey(Date.now());
-  pastDayKeys = tracker.getSortedDayKeys().filter(k => k !== todayKey).reverse();
+  const sortedKeys = tracker.getSortedDayKeys();
+  pastDayKeys = [];
+  for (let i = sortedKeys.length - 1; i >= 0; i--) {
+    const k = sortedKeys[i];
+    if (k !== todayKey) pastDayKeys.push(k);
+  }
 }
 
 // Draws one set of centered lines at a vertical pixel offset. Does not

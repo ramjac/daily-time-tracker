@@ -194,7 +194,7 @@ export class WorkTracker {
     // about - this is what allows PAST_DAYS to page through the full
     // history without loading each day's segments just to list it.
     const keys = Object.keys(this.dayTotals);
-    if (!keys.includes(today)) keys.push(today);
+    if (!(today in this.dayTotals)) keys.push(today);
     keys.sort(); // Chronological: earliest to latest
     return keys;
   }

@@ -4,18 +4,6 @@ int main(void) {
   Window *w = window_create();
   window_stack_push(w, true);
 
-#ifdef PBL_DEBUG
-  // Built with `pebble build --debug`: enable the xsbug JavaScript debugger,
-  // plus the same enlarged heap sizing used in release builds below.
-  ModdableCreationRecord cr = {
-    .recordSize = sizeof(cr),
-    .stack = 4 * 1024,
-    .slot = 32 * 1024,
-    .chunk = 48 * 1024,
-    .flags = kModdableCreationFlagDebug | kModdableCreationFlagLogInstrumentation,
-  };
-  moddable_createMachine(&cr);
-#else
   // Custom XS heap sizing. PebbleOS's default Alloy machine reserves a
   // large slot heap (~21KB used capacity) but a tiny chunk heap (~5-9KB) -
   // chunk memory backs strings/arrays/objects, which is exactly what
@@ -32,9 +20,16 @@ int main(void) {
     .stack = 4 * 1024,
     .slot = 32 * 1024,
     .chunk = 48 * 1024,
+    .flags = 0,
   };
-  moddable_createMachine(&cr);
+
+#ifdef PBL_DEBUG
+  // Built with `pebble build --debug`: enable the xsbug JavaScript debugger
+  // and log instrumentation in debug builds.
+  cr.flags |= (kModdableCreationFlagDebug | kModdableCreationFlagLogInstrumentation);
 #endif
+
+  moddable_createMachine(&cr);
 
   window_destroy(w);
 }

@@ -183,7 +183,10 @@ export class WorkTracker {
       delete this.dayTotals[dayKey];
       return;
     }
-    const totalMs = segs.reduce((acc, seg) => acc + getSegmentDurationMs(seg), 0);
+    let totalMs = 0;
+    for (let i = 0; i < segs.length; i++) {
+      totalMs += getSegmentDurationMs(segs[i]);
+    }
     this.dayTotals[dayKey] = { totalMs, count: segs.length };
   }
 
@@ -194,7 +197,7 @@ export class WorkTracker {
     // about - this is what allows PAST_DAYS to page through the full
     // history without loading each day's segments just to list it.
     const keys = Object.keys(this.dayTotals);
-    if (!keys.includes(today)) keys.push(today);
+    if (!(today in this.dayTotals)) keys.push(today);
     keys.sort(); // Chronological: earliest to latest
     return keys;
   }
@@ -215,7 +218,11 @@ export class WorkTracker {
   getDayTotalMs(dayKey, now = Date.now()) {
     let total;
     if (this.isDayLoaded(dayKey)) {
-      total = this.days[dayKey].reduce((acc, seg) => acc + getSegmentDurationMs(seg), 0);
+      const segs = this.days[dayKey];
+      total = 0;
+      for (let i = 0; i < segs.length; i++) {
+        total += getSegmentDurationMs(segs[i]);
+      }
     } else {
       total = this.dayTotals[dayKey] ? this.dayTotals[dayKey].totalMs : 0;
     }

@@ -148,22 +148,23 @@ const ICONS = {
 // center, following the circle inset by `pad`, so corner icons stay
 // just inside the visible round area. On rectangular (emery) screens
 // they reduce to the simple fixed-edge-minus-pad position.
-function safeRightX(iconW, iconH, y) {
-  if (!screen.round) return render.width - pad - iconW;
+function getMaxDx(iconH, y) {
   const cx = render.width / 2;
   const r = cx - pad;
   const dy = y + iconH / 2 - render.height / 2;
-  const maxDx = Math.sqrt(Math.max(0, r * r - dy * dy));
-  return Math.round(cx + maxDx - iconW);
+  return Math.sqrt(Math.max(0, r * r - dy * dy));
+}
+
+function safeRightX(iconW, iconH, y) {
+  if (!screen.round) return render.width - pad - iconW;
+  const cx = render.width / 2;
+  return Math.round(cx + getMaxDx(iconH, y) - iconW);
 }
 
 function safeLeftX(iconH, y) {
   if (!screen.round) return pad;
   const cx = render.width / 2;
-  const r = cx - pad;
-  const dy = y + iconH / 2 - render.height / 2;
-  const maxDx = Math.sqrt(Math.max(0, r * r - dy * dy));
-  return Math.round(cx - maxDx);
+  return Math.round(cx - getMaxDx(iconH, y));
 }
 
 // Draws a plain text button hint (no icon), right-anchored at the given

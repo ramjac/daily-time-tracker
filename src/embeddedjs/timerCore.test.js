@@ -48,6 +48,28 @@ describe("Timer Core - Multi-Day & Segment Operations", () => {
     assert.equal(getDefaultLabel(3), "Timespan 3");
   });
 
+  it("formats timestamps into 12-hour formatted time of day strings with AM/PM", () => {
+    // Midnight (00:00) -> 12:00 AM
+    const midnight = new Date(2026, 8, 3, 0, 0, 0).getTime();
+    assert.equal(formatTimeOfDay(midnight), "12:00 AM");
+
+    // Morning hour with single-digit minute padding -> 9:05 AM
+    const morning = new Date(2026, 8, 3, 9, 5, 0).getTime();
+    assert.equal(formatTimeOfDay(morning), "9:05 AM");
+
+    // Noon (12:00) -> 12:00 PM
+    const noon = new Date(2026, 8, 3, 12, 0, 0).getTime();
+    assert.equal(formatTimeOfDay(noon), "12:00 PM");
+
+    // Afternoon hour -> 2:30 PM
+    const afternoon = new Date(2026, 8, 3, 14, 30, 0).getTime();
+    assert.equal(formatTimeOfDay(afternoon), "2:30 PM");
+
+    // Late evening -> 11:59 PM
+    const night = new Date(2026, 8, 3, 23, 59, 0).getTime();
+    assert.equal(formatTimeOfDay(night), "11:59 PM");
+  });
+
   it("formats durations with only units meaningful at their scale", () => {
     assert.equal(formatDuration(0), "0s");
     assert.equal(formatDuration(7), "7s");

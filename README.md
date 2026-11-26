@@ -4,8 +4,7 @@ A workday time-tracking app for Pebble, written in embedded JavaScript
 targeting the **RePebble Alloy** runtime (Moddable XS), with a small C
 bootstrap. It works like a labeled stopwatch: start/stop a timer to record
 "segments" of your day, optionally label them by voice dictation, page back
-through today's segments or past days, and sync segments to the phone's
-Pebble Timeline as calendar pins.
+through today's segments or past days.
 
 Built with cross-platform support for both rectangular (**Emery** / Pebble
 Time 2) and round (**Gabbro** / Pebble Time Round 2) displays.
@@ -37,7 +36,7 @@ src/c/mdbl.c                   C glue that boots the Moddable XS machine
 src/embeddedjs/main.js         Watch-side app: navigation, drawing, dictation, persistence
 src/embeddedjs/timerCore.js    Platform-independent timer/segment domain model (unit tested)
 src/embeddedjs/manifest.json   Moddable manifest (wires JS modules into the build)
-src/pkjs/index.js              PebbleKit JS (phone-side): Timeline pin sync
+src/pkjs/index.js              PebbleKit JS (phone-side); see "Future Work"
 package.json                   Project metadata (UUID, platforms, message keys, resources)
 wscript                        Build rules — usually no need to edit
 ```
@@ -178,3 +177,51 @@ Full SDK docs and tutorials: <https://developer.repebble.com>
 Debugging notes specific to this app (memory-budget pitfalls, the
 stale-button-press guard pattern, dictation-testing quirks, etc.) live in
 [`.github/copilot-instructions.md`](.github/copilot-instructions.md).
+
+## Future Work
+
+Features described in the docs that are not yet wired up, plus known
+technical loose ends.
+
+### Features not yet implemented
+
+- **Phone-side Timeline pin sync (watch-side sender missing).** The phone side
+  is fully built — `src/pkjs/appMessageHandler.js` handles
+  `INSERT_TIMELINE_PIN` / `DELETE_TIMELINE_PIN`, and `package.json` declares
+  the matching `messageKeys`. But the watch side **never sends any AppMessage**
+  (there is no `Pebble.sendAppMessage` call in `src/embeddedjs/main.js`), so no
+  Timeline pins are ever created or removed and the `src/pkjs` process is
+  currently dead code. To finish this, `main.js` must emit:
+  - On segment stop/completion: `INSERT_TIMELINE_PIN` with
+    `{ action, id, label, startTime, durationMs }`, where `durationMs` is
+    computed via `getSegmentDurationMs(seg)` (transport payloads may carry it;
+    persisted segment objects still must not).
+  - On segment delete (when the delete confirmation is accepted):
+    `DELETE_TIMELINE_PIN` with `{ action, id }`.
+
+  Keep the payload aligned with `appMessageHandler.js` validation: `id` a
+  string or number, `durationMs` a finite number `> 0`, `startTime` a parseable
+  timestamp. (The phone-side pin id is `work-segment-<id>`; the segment `id` is
+  the small incrementing integer.)
+
+### Technical issues
+
+- **Unused icon resources.** `ICON_MERGE_UP` (resource id 3) and
+  `ICON_MERGE_DOWN` (id 4) are declared in `package.json`'s
+  `pebble.resources.media` but are no longer referenced — the Segment Actions
+  merge actions now render as right-anchored **text labels** ("merge prev" /
+  "merge next") instead of icons (see `drawTextHint()` in `main.js`). Because
+  that media array is **positional and append-only** (reordering silently
+  repoints every `new Poco.PebbleBitmap(id)` reference), these two entries
+  cannot simply be deleted without shifting every subsequent icon id. Either
+  leave them and note that ids 3–4 are intentionally unused, or migrate the
+  icon table to stable symbolic references before removing them.
+- **Stale TEST-ONLY seed block.** The commented-out
+  `generateRandomTestPastDay()` helper near the bottom of `main.js` still calls
+  the removed `save()` function (the code now uses `saveDay()`/`saveIndex()`).
+  It is harmless while commented out, but will throw if re-enabled for local
+  history-paging tests — update the call before reuse.
+- **Doc/code mismatch on the screen-shape check.** The docs describe the
+  round/rect guard as `device.screen.shape === "round"`, but `main.js` actually
+  uses the boolean `screen.round`. Align the docs to the real API so a future
+  layout change reuses the check that's actually in the code.

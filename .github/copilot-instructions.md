@@ -14,13 +14,13 @@
 This is a RePebble Alloy/Moddable XS app with two JavaScript runtimes and a small native bootstrap:
 
 - `src/c/mdbl.c` is the Pebble C entry point. It creates the initial window and starts the Moddable XS machine, enabling the XS debugger for debug builds.
-- `src/embeddedjs/main.js` is the watch-side application. It owns the button-driven navigation/UI, dictation flows, timer lifecycle, localStorage persistence, and AppMessage synchronization.
+- `src/embeddedjs/main.js` is the watch-side application. It owns the button-driven navigation/UI, dictation flows, timer lifecycle, and localStorage persistence.
 - `src/embeddedjs/timerCore.js` contains the platform-independent timer domain model and formatting helpers. `WorkTracker` stores completed segments by local `YYYY-MM-DD` day key and optionally one active segment.
 - `src/embeddedjs/manifest.json` wires the watch-side JavaScript modules into the Moddable build.
-- `src/pkjs/index.js` is the phone-side PebbleKit JS process. It translates watch AppMessage actions into Pebble Timeline pin insert/delete operations.
+- `src/pkjs/index.js` is the phone-side PebbleKit JS process. It receives watch AppMessages to sync Timeline pins (the watch-side sender is not yet implemented — see the README's "Future Work").
 - `wscript` loads the Pebble SDK, compiles the C sources once per target platform, and bundles the phone-side JavaScript. `package.json` defines the app UUID, Moddable project type, SDK version, target platforms, and Pebble resource metadata, including any custom button-prompt icon assets added to the watch app.
 
-The normal data flow is: button/dictation input on the watch -> `WorkTracker` state in `main.js` -> localStorage persistence -> AppMessage for completed or changed segments -> phone-side Timeline pin synchronization. The active timer is displayed from timestamp deltas on a one-second interval rather than from an accumulating counter.
+The normal data flow is: button/dictation input on the watch -> `WorkTracker` state in `main.js` -> localStorage persistence. The active timer is displayed from timestamp deltas on a one-second interval rather than from an accumulating counter.
 
 ## Repository-specific conventions
 
@@ -28,7 +28,6 @@ The normal data flow is: button/dictation input on the watch -> `WorkTracker` st
 - Preserve the split persistence model serialized by `WorkTracker`: the index is `{ dayTotals, currentSegment, nextSegmentId }`, while each loaded/stored day is a separate segment array. Completed segment records are `{ id, label, startTime, stopTime }`; do not add `durationMs` back to persisted segment objects.
 - Labels supplied by users are trimmed. A new unlabeled segment uses `Timespan N`, where `N` is its sequence within that day; failed or empty dictation leaves the existing label unchanged.
 - Segment merges are adjacent-only. The non-target neighbor's label and ID are retained, and the merged time range is the outer span from the earliest start to latest stop (including any gap between the original segments).
-- Keep Timeline synchronization actions and payloads aligned between `main.js` and `src/pkjs/index.js`: `INSERT_TIMELINE_PIN` and `DELETE_TIMELINE_PIN`, with segment `id`, `label`, `startTime`, and a computed `durationMs`. Timeline transport may include `durationMs`; persisted segment objects do not.
 - Both screen shapes are supported in the same watch UI. Use the existing `device.screen.shape === "round"` check and safe padding differences when changing layouts.
 - The UI uses the four hardware button names (`up`, `down`, `select`, `back`) and explicit view state values (`TODAY`, `TODAY_SEGMENTS`, `PAST_DAYS`, `SEGMENT_ACTIONS`) for navigation.
 - Keep watch-side icon assets in the Pebble resource pipeline: declare them in `package.json` under `pebble.resources.media`, give them stable semantic names that match their button/action role, and reference those same semantics consistently from `src/embeddedjs/main.js`.
